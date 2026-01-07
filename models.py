@@ -1,0 +1,256 @@
+"""
+Core data models for the football match engine.
+"""
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional
+from enum import Enum
+import math
+
+
+class Trait(Enum):
+    """Player traits that enable certain tactical roles"""
+    PACE = "pace"
+    STAMINA = "stamina"
+    PASSING = "passing"
+    SHOOTING = "shooting"
+    DEFENDING = "defending"
+    DRIBBLING = "dribbling"
+    POSITIONING = "positioning"
+    COMPOSURE = "composure"
+    WORKRATE = "workrate"
+    AGGRESSION = "aggression"
+    AERIAL = "aerial"
+    FIRST_TOUCH = "first_touch"
+    VISION = "vision"
+    LEADERSHIP = "leadership"
+
+
+class Phase(Enum):
+    """Match phases"""
+    BUILDUP = "buildup"
+    PROGRESSION = "progression"
+    ATTACKING = "attacking"
+    DEFENDING = "defending"
+    TRANSITION_ATK = "transition_attack"
+    TRANSITION_DEF = "transition_defense"
+    SET_PIECE = "set_piece"
+
+
+class Zone(Enum):
+    """Pitch zones"""
+    GK = "goalkeeper"
+    DEF_LEFT = "defense_left"
+    DEF_CENTER = "defense_center"
+    DEF_RIGHT = "defense_right"
+    MID_LEFT = "midfield_left"
+    MID_CENTER = "midfield_center"
+    MID_RIGHT = "midfield_right"
+    ATK_LEFT = "attack_left"
+    ATK_CENTER = "attack_center"
+    ATK_RIGHT = "attack_right"
+
+
+@dataclass
+class Position:
+    """2D position on the pitch (0-100 x 0-100)"""
+    x: float  # 0 = left touchline, 100 = right touchline
+    y: float  # 0 = own goal line, 100 = opponent goal line
+
+    def distance_to(self, other: 'Position') -> float:
+        return math.sqrt((self.x - other.x)**2 + (self.y - other.y)**2)
+
+    def move_towards(self, target: 'Position', distance: float) -> 'Position':
+        """Move towards target by given distance"""
+        d = self.distance_to(target)
+        if d == 0:
+            return Position(self.x, self.y)
+        ratio = min(distance / d, 1.0)
+        return Position(
+            self.x + (target.x - self.x) * ratio,
+            self.y + (target.y - self.y) * ratio
+        )
+
+    def clamp(self) -> 'Position':
+        """Keep position within pitch bounds"""
+        return Position(
+            max(0, min(100, self.x)),
+            max(0, min(100, self.y))
+        )
+
+    def __repr__(self):
+        return f"({self.x:.1f}, {self.y:.1f})"
+
+
+@dataclass
+class Player:
+    """Individual player with attributes and state"""
+    name: str
+    number: int
+
+    # Core attributes (0-100)
+    pace: int = 50
+    stamina: int = 50
+    passing: int = 50
+    shooting: int = 50
+    defending: int = 50
+    dribbling: int = 50
+    positioning: int = 50
+    composure: int = 50
+    workrate: int = 50
+    aggression: int = 50
+    aerial: int = 50
+    first_touch: int = 50
+    vision: int = 50
+
+    # Current state
+    position: Position = field(default_factory=lambda: Position(50, 50))
+    base_position: Position = field(default_factory=lambda: Position(50, 50))
+    fatigue: float = 0.0  # 0-100, higher = more tired
+    has_ball: bool = False
+
+    # Role assignment
+    role: str = "default"
+
+    def influence_at(self, pos: Position) -> float:
+        """Calculate player's defensive/control influence at a position"""
+        distance = self.position.distance_to(pos)
+        if distance == 0:
+            return 1.0
+
+        # Base influence decreases with distance
+        base = 1.0 / (1.0 + distance * 0.1)
+
+        # Modifiers based on attributes
+        pace_bonus = 1.0 + (self.pace - 50) * 0.005
+        positioning_bonus = 1.0 + (self.positioning - 50) * 0.005
+        fatigue_penalty = 1.0 - (self.fatigue * 0.003)
+
+        return base * pace_bonus * positioning_bonus * fatigue_penalty
+
+    def effective_attribute(self, attr: str) -> float:
+        """Get attribute value adjusted for fatigue"""
+        base = getattr(self, attr, 50)
+        fatigue_penalty = self.fatigue * 0.3  # Lose up to 30% at max fatigue
+        return max(10, base - fatigue_penalty)
+
+    def __repr__(self):
+        return f"{self.name}({self.number})"
+
+
+@dataclass
+class Team:
+    """Team with players and tactical setup"""
+    name: str
+    players: List[Player]
+    tactics: 'TacticalSetup' = None
+
+    # Calculated metrics
+    possession: float = 50.0
+    momentum: float = 50.0
+
+    @property
+    def outfield_players(self) -> List[Player]:
+        return [p for p in self.players if p.role != "goalkeeper"]
+
+    @property
+    def goalkeeper(self) -> Optional[Player]:
+        for p in self.players:
+            if p.role == "goalkeeper":
+                return p
+        return None
+
+    def get_player_with_ball(self) -> Optional[Player]:
+        for p in self.players:
+            if p.has_ball:
+                return p
+        return None
+
+    def avg_position(self) -> Position:
+        """Average position of outfield players"""
+        outfield = self.outfield_players
+        if not outfield:
+            return Position(50, 50)
+        return Position(
+            sum(p.position.x for p in outfield) / len(outfield),
+            sum(p.position.y for p in outfield) / len(outfield)
+        )
+
+    def compactness_vertical(self) -> float:
+        """Distance between defensive and attacking lines"""
+        outfield = self.outfield_players
+        if len(outfield) < 2:
+            return 0
+        y_positions = [p.position.y for p in outfield]
+        return max(y_positions) - min(y_positions)
+
+    def compactness_horizontal(self) -> float:
+        """Width of the team"""
+        outfield = self.outfield_players
+        if len(outfield) < 2:
+            return 0
+        x_positions = [p.position.x for p in outfield]
+        return max(x_positions) - min(x_positions)
+
+    def defensive_line_height(self) -> float:
+        """Y position of the defensive line"""
+        defenders = [p for p in self.players if "def" in p.role.lower() or p.role == "cb" or p.role == "lb" or p.role == "rb"]
+        if not defenders:
+            defenders = sorted(self.outfield_players, key=lambda p: p.position.y)[:4]
+        if not defenders:
+            return 25
+        return sum(p.position.y for p in defenders) / len(defenders)
+
+
+@dataclass
+class Ball:
+    """The ball"""
+    position: Position = field(default_factory=lambda: Position(50, 50))
+    holder: Optional[Player] = None
+    in_play: bool = True
+
+    def give_to(self, player: Player):
+        if self.holder:
+            self.holder.has_ball = False
+        self.holder = player
+        player.has_ball = True
+        self.position = Position(player.position.x, player.position.y)
+
+
+@dataclass
+class MatchEvent:
+    """An event during the match"""
+    minute: int
+    event_type: str  # "pass", "shot", "tackle", "goal", "save", etc.
+    player: Player
+    target_player: Optional[Player] = None
+    position: Position = None
+    success: bool = True
+    description: str = ""
+
+
+@dataclass
+class MatchState:
+    """Current state of the match"""
+    home_team: Team
+    away_team: Team
+    ball: Ball
+    minute: int = 0
+    phase: Phase = Phase.BUILDUP
+    events: List[MatchEvent] = field(default_factory=list)
+    home_score: int = 0
+    away_score: int = 0
+
+    # Track who's attacking (True = home, False = away)
+    home_attacking: bool = True
+
+    @property
+    def attacking_team(self) -> Team:
+        return self.home_team if self.home_attacking else self.away_team
+
+    @property
+    def defending_team(self) -> Team:
+        return self.away_team if self.home_attacking else self.home_team
+
+    def switch_possession(self):
+        self.home_attacking = not self.home_attacking
+        self.phase = Phase.TRANSITION_ATK if self.ball.holder else Phase.TRANSITION_DEF
