@@ -30,6 +30,18 @@ def create_player(name: str, number: int, role: str, base_x: float, base_y: floa
     return player
 
 
+def flip_team_positions(team: Team) -> Team:
+    """
+    Flip a team's positions so they face the opposite direction.
+    Used for away teams - their GK should be at y=95, attackers at low y.
+    """
+    for player in team.players:
+        # Flip y coordinate: 0 <-> 100
+        player.base_position.y = 100 - player.base_position.y
+        player.position.y = 100 - player.position.y
+    return team
+
+
 def create_442_team(name: str, skill_level: int = 70) -> Team:
     """Create a team in 4-4-2 formation"""
     base = skill_level
@@ -125,6 +137,7 @@ def create_demo_teams() -> Tuple[Team, Team]:
     # Away team: Gegenpressing style
     away = create_433_team("United Press", skill_level=70)
     away.tactics = create_gegenpressing()
+    flip_team_positions(away)  # Flip so they face opposite direction
 
     return home, away
 
@@ -148,6 +161,7 @@ def create_tactical_matchup(style1: str, style2: str,
 
     away = away_formation(f"Team {style2[:3].upper()}", skill2)
     away.tactics = get_tactical_setup(style2)
+    flip_team_positions(away)  # Flip so they face opposite direction
 
     return home, away
 

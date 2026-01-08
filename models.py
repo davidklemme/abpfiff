@@ -201,19 +201,105 @@ class Team:
         return sum(p.position.y for p in defenders) / len(defenders)
 
 
+class BallState(Enum):
+    """Ball state"""
+    HELD = "held"           # Player has the ball at feet
+    GROUND_PASS = "ground_pass"  # Rolling on ground
+    AIR_PASS = "air_pass"    # In the air (lofted pass, cross)
+    SHOT = "shot"           # Shot toward goal
+    LOOSE = "loose"         # No one has it
+
+
 @dataclass
 class Ball:
-    """The ball"""
+    """The ball with physics and flight model"""
     position: Position = field(default_factory=lambda: Position(50, 50))
     holder: Optional[Player] = None
     in_play: bool = True
 
+    # Flight state
+    state: BallState = BallState.HELD
+    target_position: Optional[Position] = None
+    target_player: Optional[Player] = None  # Intended recipient
+    flight_ticks_remaining: int = 0
+    flight_speed: float = 0  # Units per tick
+    passer: Optional[Player] = None  # Who kicked it
+
     def give_to(self, player: Player):
+        """Instantly give ball to player (for tackles, loose ball wins)"""
         if self.holder:
             self.holder.has_ball = False
         self.holder = player
         player.has_ball = True
         self.position = Position(player.position.x, player.position.y)
+        self.state = BallState.HELD
+        self.target_position = None
+        self.target_player = None
+        self.flight_ticks_remaining = 0
+        self.passer = None
+
+    def start_pass(self, passer: Player, target: Player, is_lofted: bool = False):
+        """Start a pass - ball will travel over time"""
+        if self.holder:
+            self.holder.has_ball = False
+        self.holder = None
+        self.passer = passer
+        self.target_player = target
+        self.target_position = Position(target.position.x, target.position.y)
+
+        # Calculate flight time based on distance
+        distance = passer.position.distance_to(target.position)
+
+        if is_lofted:
+            self.state = BallState.AIR_PASS
+            self.flight_speed = 12  # Slower in air
+            self.flight_ticks_remaining = max(1, int(distance / self.flight_speed))
+        else:
+            self.state = BallState.GROUND_PASS
+            self.flight_speed = 18  # Faster on ground
+            self.flight_ticks_remaining = max(1, int(distance / self.flight_speed))
+
+    def start_shot(self, shooter: Player, target_pos: Position):
+        """Start a shot toward goal"""
+        if self.holder:
+            self.holder.has_ball = False
+        self.holder = None
+        self.passer = shooter
+        self.target_position = target_pos
+        self.target_player = None
+        self.state = BallState.SHOT
+
+        distance = shooter.position.distance_to(target_pos)
+        self.flight_speed = 25  # Shots are fast
+        self.flight_ticks_remaining = max(1, int(distance / self.flight_speed))
+
+    def update_flight(self) -> bool:
+        """Update ball position during flight. Returns True if ball arrived."""
+        if self.state == BallState.HELD or self.target_position is None:
+            return False
+
+        if self.flight_ticks_remaining <= 0:
+            return True
+
+        # Move ball toward target
+        self.position = self.position.move_towards(self.target_position, self.flight_speed)
+        self.flight_ticks_remaining -= 1
+
+        return self.flight_ticks_remaining <= 0
+
+    def is_in_flight(self) -> bool:
+        """Check if ball is traveling"""
+        return self.state in [BallState.GROUND_PASS, BallState.AIR_PASS, BallState.SHOT]
+
+    def make_loose(self):
+        """Ball becomes loose (no one has it, not traveling to anyone)"""
+        if self.holder:
+            self.holder.has_ball = False
+        self.holder = None
+        self.state = BallState.LOOSE
+        self.target_position = None
+        self.target_player = None
+        self.flight_ticks_remaining = 0
 
 
 @dataclass
@@ -243,6 +329,9 @@ class MatchState:
     # Track who's attacking (True = home, False = away)
     home_attacking: bool = True
 
+    # Track possession changes for triggers like BALL_LOST, BALL_WON
+    ticks_since_possession_change: int = 0
+
     @property
     def attacking_team(self) -> Team:
         return self.home_team if self.home_attacking else self.away_team
@@ -254,3 +343,8 @@ class MatchState:
     def switch_possession(self):
         self.home_attacking = not self.home_attacking
         self.phase = Phase.TRANSITION_ATK if self.ball.holder else Phase.TRANSITION_DEF
+        self.ticks_since_possession_change = 0  # Reset counter on possession change
+
+    def tick(self):
+        """Called each simulation tick to update counters"""
+        self.ticks_since_possession_change += 1

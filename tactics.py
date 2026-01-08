@@ -62,6 +62,10 @@ class TacticalPrinciple:
         if self.applies_to_roles and player.role not in self.applies_to_roles:
             return False
 
+        # Check trigger type
+        if not self._check_trigger(state, team_attacking):
+            return False
+
         # Check ball position
         ball_y = state.ball.position.y
         if not (self.ball_zone_y_min <= ball_y <= self.ball_zone_y_max):
@@ -81,6 +85,31 @@ class TacticalPrinciple:
             if player.effective_attribute(attr) < min_val:
                 return False
 
+        return True
+
+    def _check_trigger(self, state: MatchState, team_attacking: bool) -> bool:
+        """Check if the trigger condition is met"""
+        if self.trigger == TriggerType.ALWAYS:
+            return True
+        elif self.trigger == TriggerType.IN_POSSESSION:
+            return team_attacking
+        elif self.trigger == TriggerType.OUT_OF_POSSESSION:
+            return not team_attacking
+        elif self.trigger == TriggerType.BALL_LOST:
+            # Check if we just lost the ball (within last few ticks)
+            return not team_attacking and state.ticks_since_possession_change < 6
+        elif self.trigger == TriggerType.BALL_WON:
+            # Check if we just won the ball
+            return team_attacking and state.ticks_since_possession_change < 6
+        elif self.trigger == TriggerType.BUILDUP:
+            # In possession, ball in own half
+            return team_attacking and state.ball.position.y < 50
+        elif self.trigger == TriggerType.ATTACKING_THIRD:
+            # In possession, ball in attacking third
+            return team_attacking and state.ball.position.y > 66
+        elif self.trigger == TriggerType.DEFENDING_THIRD:
+            # Out of possession, ball in our defensive third
+            return not team_attacking and state.ball.position.y < 33
         return True
 
 
@@ -130,7 +159,7 @@ def create_guardiola_positional_play() -> TacticalSetup:
             name="play_out_from_back",
             trigger=TriggerType.BUILDUP,
             applies_to_roles=["gk", "cb", "cb_l", "cb_r"],
-            movement=MovementInstruction(maintain_shape=0.8, towards_ball=0.1),
+            movement=MovementInstruction(maintain_shape=0.4, towards_ball=0.1, towards_space=0.3),
             priority=6,
             ball_zone_y_max=30,
             team_has_ball=True
@@ -141,7 +170,7 @@ def create_guardiola_positional_play() -> TacticalSetup:
             name="dm_drops_to_build",
             trigger=TriggerType.BUILDUP,
             applies_to_roles=["dm", "cdm"],
-            movement=MovementInstruction(relative_y=-10, maintain_shape=0.3),
+            movement=MovementInstruction(relative_y=-10, maintain_shape=0.2, towards_space=0.3),
             priority=7,
             ball_zone_y_max=35,
             team_has_ball=True,
@@ -229,8 +258,8 @@ def create_guardiola_positional_play() -> TacticalSetup:
             trigger=TriggerType.OUT_OF_POSSESSION,
             applies_to_roles=["cb", "cb_l", "cb_r", "lb", "rb", "dm"],
             movement=MovementInstruction(
-                maintain_shape=0.7,
-                towards_ball=0.2
+                maintain_shape=0.4,
+                towards_ball=0.4
             ),
             priority=8,
             team_has_ball=False
@@ -278,8 +307,9 @@ def create_gegenpressing() -> TacticalSetup:
             trigger=TriggerType.BALL_LOST,
             applies_to_roles=["cb", "cb_l", "cb_r", "dm"],
             movement=MovementInstruction(
-                relative_y=-5,
-                maintain_shape=0.6
+                relative_y=-8,
+                maintain_shape=0.3,
+                towards_ball=0.2
             ),
             priority=8,
             team_has_ball=False
@@ -382,7 +412,8 @@ def create_low_block_counter() -> TacticalSetup:
             applies_to_roles=["cb", "cb_l", "cb_r", "lb", "rb"],
             movement=MovementInstruction(
                 target_y=25,
-                maintain_shape=0.9
+                maintain_shape=0.5,
+                towards_ball=0.3
             ),
             priority=9,
             team_has_ball=False
@@ -395,8 +426,8 @@ def create_low_block_counter() -> TacticalSetup:
             applies_to_roles=["dm", "cdm", "cm", "cm_l", "cm_r"],
             movement=MovementInstruction(
                 target_y=35,
-                maintain_shape=0.8,
-                towards_ball=0.2
+                maintain_shape=0.4,
+                towards_ball=0.4
             ),
             priority=8,
             team_has_ball=False

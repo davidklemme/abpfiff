@@ -1,0 +1,11 @@
+installation:
+  version: 6.0.0-alpha.22
+  installDate: 2026-01-08T08:56:39.447Z
+  lastUpdated: 2026-01-08T08:56:39.447Z
+modules:
+  - core
+  - bmgd
+  - bmm
+  - cis
+ides:
+  - claude-code
