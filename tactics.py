@@ -25,14 +25,24 @@ class TriggerType(Enum):
 
 @dataclass
 class MovementInstruction:
-    """Where should a player move?"""
+    """Where should a player move?
+
+    All y values (target_y, relative_y) are expressed in the team's attacking
+    frame: the team always attacks toward y=100. The engine converts to
+    absolute pitch coordinates via Team.frame_y, so the same instruction
+    works for both the home and the away team.
+    """
     target_x: Optional[float] = None  # Absolute or None for relative
-    target_y: Optional[float] = None
+    target_y: Optional[float] = None  # In team attacking frame
     relative_x: float = 0  # Relative to current position
-    relative_y: float = 0
+    relative_y: float = 0  # In team attacking frame (positive = forward)
     towards_ball: float = 0  # 0-1, how much to move toward ball
     towards_space: float = 0  # 0-1, how much to find open space
     maintain_shape: float = 0  # 0-1, how much to maintain base position
+    # Signed lateral movement relative to the player's own side of the pitch:
+    # positive = tuck toward the center (x=50), negative = push toward the
+    # nearer touchline. Replaces per-side relative_x duplication.
+    towards_center_x: float = 0
 
 
 @dataclass
@@ -56,18 +66,28 @@ class TacticalPrinciple:
     min_stamina: float = 0
     required_attributes: Dict[str, int] = field(default_factory=dict)
 
-    def check_conditions(self, player: Player, state: MatchState, team_attacking: bool) -> bool:
-        """Check if this principle should activate for this player"""
+    def check_conditions(self, player: Player, state: MatchState, team_attacking: bool,
+                         team: Optional[Team] = None) -> bool:
+        """Check if this principle should activate for this player.
+
+        Ball-zone conditions are expressed in the team's attacking frame
+        (y=100 is always the opponent goal); pass `team` so away-team
+        principles evaluate against the correct half of the pitch.
+        """
         # Check role
         if self.applies_to_roles and player.role not in self.applies_to_roles:
             return False
 
+        # Ball position in the team's attacking frame
+        ball_y = state.ball.position.y
+        if team is not None:
+            ball_y = team.frame_y(ball_y)
+
         # Check trigger type
-        if not self._check_trigger(state, team_attacking):
+        if not self._check_trigger(state, team_attacking, ball_y):
             return False
 
         # Check ball position
-        ball_y = state.ball.position.y
         if not (self.ball_zone_y_min <= ball_y <= self.ball_zone_y_max):
             return False
 
@@ -87,8 +107,11 @@ class TacticalPrinciple:
 
         return True
 
-    def _check_trigger(self, state: MatchState, team_attacking: bool) -> bool:
-        """Check if the trigger condition is met"""
+    def _check_trigger(self, state: MatchState, team_attacking: bool,
+                       ball_y: float) -> bool:
+        """Check if the trigger condition is met.
+
+        `ball_y` is the ball's y in the team's attacking frame."""
         if self.trigger == TriggerType.ALWAYS:
             return True
         elif self.trigger == TriggerType.IN_POSSESSION:
@@ -103,13 +126,13 @@ class TacticalPrinciple:
             return team_attacking and state.ticks_since_possession_change < 6
         elif self.trigger == TriggerType.BUILDUP:
             # In possession, ball in own half
-            return team_attacking and state.ball.position.y < 50
+            return team_attacking and ball_y < 50
         elif self.trigger == TriggerType.ATTACKING_THIRD:
             # In possession, ball in attacking third
-            return team_attacking and state.ball.position.y > 66
+            return team_attacking and ball_y > 66
         elif self.trigger == TriggerType.DEFENDING_THIRD:
             # Out of possession, ball in our defensive third
-            return not team_attacking and state.ball.position.y < 33
+            return not team_attacking and ball_y < 33
         return True
 
 
@@ -134,11 +157,12 @@ class TacticalSetup:
     directness: float = 50  # 0-100, higher = more direct/vertical
 
     def get_active_principles(self, player: Player, state: MatchState,
-                               team_attacking: bool) -> List[TacticalPrinciple]:
+                               team_attacking: bool,
+                               team: Optional[Team] = None) -> List[TacticalPrinciple]:
         """Get all principles that should be active for this player"""
         active = []
         for principle in self.principles:
-            if principle.check_conditions(player, state, team_attacking):
+            if principle.check_conditions(player, state, team_attacking, team):
                 active.append(principle)
         return sorted(active, key=lambda p: p.priority, reverse=True)
 
@@ -183,7 +207,7 @@ def create_guardiola_positional_play() -> TacticalSetup:
             trigger=TriggerType.IN_POSSESSION,
             applies_to_roles=["lb", "rb", "lwb", "rwb"],
             movement=MovementInstruction(
-                relative_x=-15 if True else 15,  # Move inside
+                towards_center_x=15,  # Move inside, whichever side they play
                 relative_y=10,
                 maintain_shape=0.2
             ),
@@ -215,7 +239,7 @@ def create_guardiola_positional_play() -> TacticalSetup:
             trigger=TriggerType.IN_POSSESSION,
             applies_to_roles=["lw", "rw", "lm", "rm"],
             movement=MovementInstruction(
-                relative_x=20 if True else -20,  # Push to touchline
+                towards_center_x=-20,  # Push to the nearer touchline
                 relative_y=5,
                 maintain_shape=0.4
             ),
@@ -360,7 +384,7 @@ def create_gegenpressing() -> TacticalSetup:
             applies_to_roles=["lb", "rb"],
             movement=MovementInstruction(
                 relative_y=20,
-                relative_x=10,  # Wide
+                towards_center_x=-10,  # Overlap wide
                 maintain_shape=0.2
             ),
             priority=6,
@@ -467,7 +491,7 @@ def create_low_block_counter() -> TacticalSetup:
             applies_to_roles=["lw", "rw", "lm", "rm"],
             movement=MovementInstruction(
                 relative_y=20,
-                relative_x=15,
+                towards_center_x=-15,  # Break wide on the counter
                 towards_space=0.5
             ),
             priority=9,
@@ -481,7 +505,7 @@ def create_low_block_counter() -> TacticalSetup:
             trigger=TriggerType.OUT_OF_POSSESSION,
             applies_to_roles=["lw", "rw", "lm", "rm"],
             movement=MovementInstruction(
-                relative_x=-10,  # Tuck in
+                towards_center_x=10,  # Tuck in
                 relative_y=-10,
                 maintain_shape=0.5
             ),

@@ -41,6 +41,17 @@ python demo.py --mode matrix
 python demo.py --space-control
 ```
 
+## Tests
+
+No framework needed - plain asserts:
+
+```bash
+python3 tests/test_psychology.py   # Phase 1 psychological engine
+python3 tests/test_direction.py    # Attack-direction / symmetry correctness
+```
+
+See `docs/reviews/` for engine reviews and the current roadmap.
+
 ## Architecture
 
 ```
@@ -92,6 +103,9 @@ my_tactics = TacticalSetup(
 
 ## TODO / Future Ideas
 
+- [ ] Rules-of-the-game minimum: throw-ins, corners, goal kicks as possession restarts
+- [ ] Statistical validation harness (goals/shots/possession vs. real-football bands)
+- [ ] Lead passes / receiver movement (ball model currently locks target at kick time)
 - [ ] Set pieces (corners, free kicks)
 - [ ] Substitutions and fatigue management
 - [ ] Individual player instructions

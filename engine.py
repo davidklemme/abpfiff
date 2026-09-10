@@ -28,6 +28,7 @@ class SimulationConfig:
     fatigue_rate: float = 0.1  # Fatigue gain per tick
     momentum_decay: float = 0.95  # How quickly momentum normalizes
     randomness: float = 0.3  # 0-1, how much randomness affects outcomes
+    seed: Optional[int] = None  # Seed the RNG for reproducible matches
     debug: bool = False
 
 
@@ -38,6 +39,8 @@ class MatchEngine:
 
     def __init__(self, config: SimulationConfig = None):
         self.config = config or SimulationConfig()
+        if self.config.seed is not None:
+            random.seed(self.config.seed)
         self.space_control = SpaceControl(resolution=10)
         self.event_handlers: List[Callable] = []
 
@@ -127,7 +130,7 @@ class MatchEngine:
             # Get active principles for this player
             principles = []
             if tactics:
-                principles = tactics.get_active_principles(player, state, team_attacking)
+                principles = tactics.get_active_principles(player, state, team_attacking, team)
 
             if principles:
                 # Apply highest priority principle
@@ -139,31 +142,42 @@ class MatchEngine:
 
     def _apply_movement(self, player: Player, movement: MovementInstruction,
                         state: MatchState, team: Team):
-        """Apply a movement instruction to a player"""
-        target_x = player.position.x
-        target_y = player.position.y
+        """Apply a movement instruction to a player.
 
-        # Absolute target
+        Instruction y values are in the team's attacking frame (the team
+        always attacks toward frame y=100); we compute the target in that
+        frame and convert back to absolute pitch coordinates at the end.
+        """
+        f = team.frame_y
+        target_x = player.position.x
+        target_y = f(player.position.y)
+
+        # Absolute target (frame coordinates)
         if movement.target_x is not None:
             target_x = movement.target_x
         if movement.target_y is not None:
             target_y = movement.target_y
 
-        # Relative movement
+        # Relative movement (frame coordinates)
         target_x += movement.relative_x
         target_y += movement.relative_y
+
+        # Lateral movement relative to the player's side of the pitch:
+        # positive tucks toward the center, negative pushes to the touchline
+        if movement.towards_center_x:
+            side = 1.0 if player.base_position.x < 50 else -1.0
+            target_x += movement.towards_center_x * side
 
         # Move toward ball
         if movement.towards_ball > 0:
             ball_pos = state.ball.position
             target_x += (ball_pos.x - player.position.x) * movement.towards_ball
-            target_y += (ball_pos.y - player.position.y) * movement.towards_ball
+            target_y += (f(ball_pos.y) - f(player.position.y)) * movement.towards_ball
 
         # Move toward open space
         if movement.towards_space > 0:
-            open_spaces = self.space_control.find_open_spaces(
-                team, state.away_team if state.home_attacking else state.home_team
-            )
+            opponents = state.away_team if team is state.home_team else state.home_team
+            open_spaces = self.space_control.find_open_spaces(team, opponents)
             if open_spaces:
                 # Find nearest advantageous space
                 best_space = min(
@@ -171,16 +185,16 @@ class MatchEngine:
                     key=lambda s: player.position.distance_to(s)
                 )
                 target_x += (best_space.x - player.position.x) * movement.towards_space * 0.3
-                target_y += (best_space.y - player.position.y) * movement.towards_space * 0.3
+                target_y += (f(best_space.y) - f(player.position.y)) * movement.towards_space * 0.3
 
         # Maintain shape (blend toward base position)
         if movement.maintain_shape > 0:
             target_x = target_x * (1 - movement.maintain_shape) + player.base_position.x * movement.maintain_shape
-            target_y = target_y * (1 - movement.maintain_shape) + player.base_position.y * movement.maintain_shape
+            target_y = target_y * (1 - movement.maintain_shape) + f(player.base_position.y) * movement.maintain_shape
 
         # Calculate movement speed based on pace and fatigue
         max_speed = (player.effective_attribute('pace') / 100) * 3  # Max 3 units per tick
-        target_pos = Position(target_x, target_y).clamp()
+        target_pos = Position(target_x, f(target_y)).clamp()
 
         # Move toward target
         new_pos = player.position.move_towards(target_pos, max_speed)
@@ -230,69 +244,78 @@ class MatchEngine:
     def _attacking_movement(self, player: Player, ball_pos: Position,
                             ball_holder: Optional[Player], team: Team,
                             other_team: Team, state: MatchState) -> tuple:
-        """Calculate attacking movement for player"""
-        target_x = player.position.x
-        target_y = player.position.y
+        """Calculate attacking movement for player.
+
+        All y values inside this function are in the team's attacking frame
+        (the team always attacks toward frame y=100). The returned target is
+        converted back to absolute pitch coordinates.
+        """
+        f = team.frame_y
+        ball_x, ball_y = ball_pos.x, f(ball_pos.y)
+        base_x, base_y = player.base_position.x, f(player.base_position.y)
+        pos_x, pos_y = player.position.x, f(player.position.y)
+
+        target_x = pos_x
+        target_y = pos_y
 
         # Role-based attacking behavior
         role = player.role.lower()
-        distance_to_ball = player.position.distance_to(ball_pos)
 
         if role in ['gk']:
             # GK stays back but supports buildup
-            target_y = player.base_position.y + 5
-            target_x = player.base_position.x
+            target_y = base_y + 5
+            target_x = base_x
 
         elif role in ['cb', 'cb_l', 'cb_r']:
             # CBs provide safety, spread for buildup
-            target_y = min(player.base_position.y + 15, ball_pos.y - 20)
+            target_y = min(base_y + 15, ball_y - 20)
             # Spread horizontally when team has ball
-            spread = 10 if player.position.x < 50 else -10
-            target_x = player.base_position.x + spread
+            spread = 10 if pos_x < 50 else -10
+            target_x = base_x + spread
 
         elif role in ['lb', 'rb', 'lwb', 'rwb']:
             # Fullbacks push forward and wide to stretch play
-            target_y = min(ball_pos.y + 10, 85)
+            target_y = min(ball_y + 10, 85)
             target_x = 15 if 'l' in role else 85
             # If ball is on their side, get even higher
-            if (player.position.x < 50) == (ball_pos.x < 50):
+            if (pos_x < 50) == (ball_x < 50):
                 target_y = min(target_y + 10, 90)
 
         elif role in ['dm', 'cdm']:
             # DM links defense and midfield
-            target_y = max(ball_pos.y - 15, player.base_position.y)
-            target_x = 50 + (ball_pos.x - 50) * 0.3
+            target_y = max(ball_y - 15, base_y)
+            target_x = 50 + (ball_x - 50) * 0.3
 
         elif role in ['cm', 'cm_l', 'cm_r']:
             # CMs support ball, find pockets of space
-            target_y = ball_pos.y + random.uniform(-5, 10)
+            target_y = ball_y + random.uniform(-5, 10)
             # Move to half-spaces
-            if player.position.x < 50:
-                target_x = max(25, ball_pos.x - 15)
+            if pos_x < 50:
+                target_x = max(25, ball_x - 15)
             else:
-                target_x = min(75, ball_pos.x + 15)
+                target_x = min(75, ball_x + 15)
 
         elif role in ['am', 'cam']:
             # AM finds space between lines
-            target_y = ball_pos.y + random.uniform(5, 20)
-            target_x = 50 + (ball_pos.x - 50) * 0.5
+            target_y = ball_y + random.uniform(5, 20)
+            target_x = 50 + (ball_x - 50) * 0.5
 
         elif role in ['lw', 'rw', 'lm', 'rm']:
             # Wingers: width and depth
             target_x = 10 if 'l' in role else 90
-            target_y = max(ball_pos.y, 60)
+            target_y = max(ball_y, 60)
             # If ball is on opposite side, come narrower for cutback
-            if (player.position.x < 50) != (ball_pos.x < 50):
+            if (pos_x < 50) != (ball_x < 50):
                 target_x = 30 if 'l' in role else 70
-                target_y = ball_pos.y + 15
+                target_y = ball_y + 15
 
         elif role in ['st', 'cf']:
             # Strikers: stretch defense, make runs
-            target_y = min(ball_pos.y + 25, 95)
+            target_y = min(ball_y + 25, 95)
             # Drift across to find space
             target_x = 50 + random.uniform(-20, 20)
-            # Stay onside (simplified)
-            def_line = self._get_defensive_line(other_team)
+            # Stay onside (simplified) - defensive line measured in our frame
+            def_line = self._get_defensive_line(other_team, f)
             target_y = min(target_y, def_line + 5)
 
         # Add some unpredictability
@@ -304,21 +327,31 @@ class MatchEngine:
         # seeking position vs. retreating toward their safe base position -
         # a rattled player hides, a confident one demands involvement.
         ball_seeking = max(0.5, min(0.95, 0.8 + player.confidence * 0.15))
-        target_x = target_x * ball_seeking + player.base_position.x * (1 - ball_seeking)
-        target_y = target_y * ball_seeking + player.base_position.y * (1 - ball_seeking)
+        target_x = target_x * ball_seeking + base_x * (1 - ball_seeking)
+        target_y = target_y * ball_seeking + base_y * (1 - ball_seeking)
 
         # Push all outfield players forward when team has ball
-        if ball_holder and ball_holder in [p for p in team.players]:
+        if ball_holder and ball_holder in team.players:
             target_y = min(target_y + 5, 95)
 
-        return target_x, target_y
+        return target_x, f(target_y)
 
     def _defending_movement(self, player: Player, ball_pos: Position,
                             ball_holder: Optional[Player], team: Team,
                             other_team: Team, state: MatchState) -> tuple:
-        """Calculate defending movement for player"""
-        target_x = player.position.x
-        target_y = player.position.y
+        """Calculate defending movement for player.
+
+        All y values inside this function are in the team's attacking frame
+        (own goal at frame y=0). The returned target is converted back to
+        absolute pitch coordinates.
+        """
+        f = team.frame_y
+        ball_x, ball_y = ball_pos.x, f(ball_pos.y)
+        base_x, base_y = player.base_position.x, f(player.base_position.y)
+        pos_x = player.position.x
+
+        target_x = pos_x
+        target_y = f(player.position.y)
 
         role = player.role.lower()
         distance_to_ball = player.position.distance_to(ball_pos)
@@ -326,78 +359,86 @@ class MatchEngine:
         if role in ['gk']:
             # GK adjusts position based on ball
             target_y = 5
-            target_x = 50 + (ball_pos.x - 50) * 0.15
+            target_x = 50 + (ball_x - 50) * 0.15
 
         elif role in ['cb', 'cb_l', 'cb_r']:
             # CBs: maintain line, cover central areas
-            target_y = min(35, ball_pos.y - 10)
+            target_y = min(35, ball_y - 10)
             # Shift toward ball side
-            target_x = player.base_position.x + (ball_pos.x - 50) * 0.15
+            target_x = base_x + (ball_x - 50) * 0.15
 
         elif role in ['lb', 'rb', 'lwb', 'rwb']:
             # Fullbacks: track wingers, stay compact
-            target_y = min(40, ball_pos.y - 5)
+            target_y = min(40, ball_y - 5)
             # Tuck in if ball is on far side
-            if (player.position.x < 50) != (ball_pos.x < 50):
+            if (pos_x < 50) != (ball_x < 50):
                 target_x = 30 if 'l' in role else 70
             else:
-                target_x = player.base_position.x
+                target_x = base_x
 
         elif role in ['dm', 'cdm']:
             # DM screens defense
-            target_y = min(45, ball_pos.y - 5)
-            target_x = 50 + (ball_pos.x - 50) * 0.4
+            target_y = min(45, ball_y - 5)
+            target_x = 50 + (ball_x - 50) * 0.4
 
         elif role in ['cm', 'cm_l', 'cm_r']:
             # CMs: press or cover
             if distance_to_ball < 25 and player.effective_attribute('workrate') > 60:
                 # Press
-                target_x = ball_pos.x
-                target_y = ball_pos.y - 5
+                target_x = ball_x
+                target_y = ball_y - 5
             else:
                 # Cover passing lanes
-                target_y = max(35, ball_pos.y - 15)
-                target_x = player.base_position.x + (ball_pos.x - 50) * 0.3
+                target_y = max(35, ball_y - 15)
+                target_x = base_x + (ball_x - 50) * 0.3
 
         elif role in ['am', 'cam']:
             # AM drops into midfield when defending
-            target_y = max(45, ball_pos.y - 10)
-            target_x = 50 + (ball_pos.x - 50) * 0.3
+            target_y = max(45, ball_y - 10)
+            target_x = 50 + (ball_x - 50) * 0.3
 
         elif role in ['lw', 'rw', 'lm', 'rm']:
             # Wingers: track back or press
-            if ball_pos.y > 60 and player.effective_attribute('workrate') > 55:
+            if ball_y > 60 and player.effective_attribute('workrate') > 55:
                 # Press high
-                target_y = ball_pos.y + 5
-                target_x = ball_pos.x + (10 if 'l' in role else -10)
+                target_y = ball_y + 5
+                target_x = ball_x + (10 if 'l' in role else -10)
             else:
                 # Track back
-                target_y = max(40, ball_pos.y - 10)
+                target_y = max(40, ball_y - 10)
                 target_x = 25 if 'l' in role else 75
 
         elif role in ['st', 'cf']:
             # Strikers: light press or stay high for counter
-            if ball_pos.y > 50:
+            if ball_y > 50:
                 # Press from front
-                target_y = ball_pos.y + 8
-                target_x = ball_pos.x + random.uniform(-10, 10)
+                target_y = ball_y + 8
+                target_x = ball_x + random.uniform(-10, 10)
             else:
                 # Stay high for counter-attack
                 target_y = 65
                 target_x = 50
 
         # Blend with base (more defensive = more base-weighted)
-        target_x = target_x * 0.5 + player.base_position.x * 0.5
-        target_y = target_y * 0.5 + player.base_position.y * 0.5
+        target_x = target_x * 0.5 + base_x * 0.5
+        target_y = target_y * 0.5 + base_y * 0.5
 
-        return target_x, target_y
+        return target_x, f(target_y)
 
-    def _get_defensive_line(self, team: Team) -> float:
-        """Get the y-position of a team's defensive line"""
+    def _get_defensive_line(self, team: Team, frame_y: Optional[Callable] = None) -> float:
+        """Get the y-position of a team's defensive line.
+
+        `frame_y` maps absolute y into the frame the caller works in
+        (e.g. the attacking team's frame when checking offside-ish lines);
+        defaults to absolute coordinates. The line is the deepest defender
+        relative to the goal the team defends, i.e. the max in the frame of
+        the team attacking them.
+        """
+        f = frame_y or (lambda y: y)
         defenders = [p for p in team.players if p.role in ['cb', 'cb_l', 'cb_r', 'lb', 'rb']]
         if defenders:
-            return max(p.position.y for p in defenders)
-        return 30
+            return max(f(p.position.y) for p in defenders)
+        return 70  # No recognized defenders: assume a deep line
 
     def _calculate_urgency(self, player: Player, ball_pos: Position,
                            team_attacking: bool) -> float:
@@ -441,6 +482,10 @@ class MatchEngine:
         if holder_is_home != state.home_attacking:
             state.home_attacking = holder_is_home
 
+        # Ball out of play safety net: shouldn't normally happen, but keep
+        # positions sane
+        ball.position = ball.position.clamp()
+
         # Determine action based on position and pressure
         pressure = self.space_control.pressing_effectiveness(
             defending_team, ball.position
@@ -455,9 +500,9 @@ class MatchEngine:
         action = self._decide_action(holder, attacking_team, defending_team, state)
 
         if action == "shoot":
-            return self._resolve_shot(state, holder)
+            return self._resolve_shot(state, holder, attacking_team, defending_team)
         elif action == "dribble":
-            return self._resolve_dribble(state, holder, defending_team)
+            return self._resolve_dribble(state, holder, attacking_team, defending_team)
         else:
             return self._resolve_pass(state, holder, attacking_team, defending_team)
 
@@ -468,8 +513,8 @@ class MatchEngine:
         Returns 'shoot', 'dribble', or 'pass'.
         """
         # Calculate factors
-        in_shooting_range = self._in_shooting_range(holder.position)
-        space_ahead = self._space_ahead(holder, defending_team)
+        in_shooting_range = self._in_shooting_range(holder.position, attacking_team)
+        space_ahead = self._space_ahead(holder, attacking_team, defending_team)
         dribbling_skill = holder.effective_attribute('dribbling')
         passing_skill = holder.effective_attribute('passing')
 
@@ -539,11 +584,13 @@ class MatchEngine:
         # Default to pass
         return "pass"
 
-    def _space_ahead(self, player: Player, defending_team: Team) -> float:
+    def _space_ahead(self, player: Player, attacking_team: Team,
+                     defending_team: Team) -> float:
         """Calculate how much space a player has ahead of them"""
-        # Check area in front of player (toward opponent goal)
-        check_y = min(player.position.y + 20, 100)
-        check_pos = Position(player.position.x, check_y)
+        # Check area in front of player (toward the goal they attack)
+        f = attacking_team.frame_y
+        check_y_frame = min(f(player.position.y) + 20, 100)
+        check_pos = Position(player.position.x, f(check_y_frame))
 
         nearest_def = min(
             (p.position.distance_to(check_pos) for p in defending_team.players),
@@ -777,13 +824,15 @@ class MatchEngine:
         psych_pressure = psychology.calculate_pressure(passer, state, defending_team)
         sys1 = psychology.system1_weight(psych_pressure.total, passer)
 
-        # Score each passing option
+        # Score each passing option, with "forward" measured in the
+        # attacking team's frame (toward the goal they are shooting at)
+        f = attacking_team.frame_y
         scored_lanes = []
         for target, quality in lanes:
             score = quality
 
             # Calculate y-progress (positive = forward, negative = backward)
-            y_diff = target.position.y - passer.position.y
+            y_diff = f(target.position.y) - f(passer.position.y)
 
             if y_diff > 10:
                 # Strong forward pass - big bonus, but it takes composure and
@@ -808,7 +857,7 @@ class MatchEngine:
                 score *= 0.3
 
             # Bonus for passes into attacking third
-            if target.position.y > 70:
+            if f(target.position.y) > 70:
                 score *= 1.3
 
             scored_lanes.append((target, max(0.05, score)))
@@ -857,6 +906,7 @@ class MatchEngine:
             return self._resolve_turnover(state, passer, "misplaced_pass")
 
     def _resolve_dribble(self, state: MatchState, dribbler: Player,
+                         attacking_team: Team,
                          defending_team: Team) -> Optional[MatchEvent]:
         """Resolve a dribble attempt"""
         # Find nearest defender
@@ -865,7 +915,7 @@ class MatchEngine:
 
         if not defenders:
             # Space to dribble
-            self._move_dribbler(dribbler, state)
+            self._move_dribbler(dribbler, state, attacking_team)
             return MatchEvent(
                 minute=state.minute,
                 event_type="dribble",
@@ -885,7 +935,7 @@ class MatchEngine:
         success_prob += (random.random() - 0.5) * self.config.randomness
 
         if random.random() < success_prob:
-            self._move_dribbler(dribbler, state)
+            self._move_dribbler(dribbler, state, attacking_team)
             return MatchEvent(
                 minute=state.minute,
                 event_type="dribble",
@@ -897,10 +947,10 @@ class MatchEngine:
         else:
             return self._resolve_tackle(state, dribbler, nearest_def)
 
-    def _move_dribbler(self, dribbler: Player, state: MatchState):
-        """Move dribbler forward"""
-        # Move toward opponent goal
-        target = Position(50, 100)  # Opponent goal
+    def _move_dribbler(self, dribbler: Player, state: MatchState,
+                       attacking_team: Team):
+        """Move dribbler forward toward the goal their team attacks"""
+        target = attacking_team.attacking_goal
         new_pos = dribbler.position.move_towards(target, 2)
         dribbler.position = new_pos.clamp()
         state.ball.position = dribbler.position
@@ -944,15 +994,16 @@ class MatchEngine:
             description=f"{loser.name} loses the ball ({reason})"
         )
 
-    def _in_shooting_range(self, pos: Position) -> bool:
-        """Check if position is in shooting range"""
-        goal = Position(50, 100)
+    def _in_shooting_range(self, pos: Position, attacking_team: Team) -> bool:
+        """Check if position is in shooting range of the attacked goal"""
+        goal = attacking_team.attacking_goal
         distance = pos.distance_to(goal)
-        return distance < 30 and pos.y > 70
+        return distance < 30 and attacking_team.frame_y(pos.y) > 70
 
-    def _resolve_shot(self, state: MatchState, shooter: Player) -> MatchEvent:
+    def _resolve_shot(self, state: MatchState, shooter: Player,
+                      attacking_team: Team, defending_team: Team) -> MatchEvent:
         """Start a shot attempt - ball will travel to goal"""
-        goal = Position(50, 100)
+        goal = attacking_team.attacking_goal
         distance = shooter.position.distance_to(goal)
 
         # Base shot quality (determines if on target)
@@ -982,9 +1033,14 @@ class MatchEngine:
                 description=f"{shooter.name} shoots!"
             )
         else:
-            # Missed - goes wide
-            state.ball.make_loose()
-            state.ball.position = Position(50, 5)  # Goal kick area
+            # Missed - goes wide, restart with a goal kick for the defenders
+            keeper = defending_team.goalkeeper
+            if keeper:
+                state.ball.give_to(keeper)
+            else:
+                state.ball.make_loose()
+                own = defending_team.own_goal
+                state.ball.position = Position(own.x, defending_team.frame_y(5))
             state.switch_possession()
             return MatchEvent(
                 minute=state.minute,
@@ -1013,11 +1069,13 @@ class MatchEngine:
 
     def _half_time(self, state: MatchState):
         """Handle half time"""
-        # Swap sides (flip y positions)
+        # Swap sides (flip y positions AND attack directions)
         for player in state.home_team.players + state.away_team.players:
             player.position.y = 100 - player.position.y
             player.base_position.y = 100 - player.base_position.y
             player.fatigue *= 0.5  # Some recovery
+        state.home_team.attacks_up = not state.home_team.attacks_up
+        state.away_team.attacks_up = not state.away_team.attacks_up
 
     def _update_fatigue(self, state: MatchState):
         """Update player fatigue"""
