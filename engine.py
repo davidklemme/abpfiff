@@ -12,6 +12,13 @@ from models import (
 )
 from spatial import SpaceControl, PassingGraph
 from tactics import TacticalSetup, TacticalPrinciple, MovementInstruction
+import psychology
+
+
+# Pass-scoring multipliers keyed by under_pressure, used instead of inline
+# if/else branches in _resolve_pass.
+LATERAL_PRESSURE_MULTIPLIER = {True: 1.0, False: 0.6}
+BACKWARD_PRESSURE_MULTIPLIER = {True: 0.8, False: 0.2}
 
 
 @dataclass
@@ -72,12 +79,16 @@ class MatchEngine:
         if action_event:
             events.append(action_event)
             self._emit_event(action_event)
+            psychology.process_feedback(action_event, state)
 
         # 4. Update fatigue
         self._update_fatigue(state)
 
         # 5. Update momentum
         self._update_momentum(state, events)
+
+        # 6. Confidence drifts back toward neutral over time
+        psychology.decay_all(state, minutes_elapsed=1.0 / self.config.ticks_per_minute)
 
         return events
 
@@ -288,10 +299,13 @@ class MatchEngine:
         target_x += random.uniform(-3, 3)
         target_y += random.uniform(-2, 2)
 
-        # When attacking, prioritize calculated position over base (more fluid)
-        # Only blend 20% with base to allow more dynamic movement
-        target_x = target_x * 0.8 + player.base_position.x * 0.2
-        target_y = target_y * 0.8 + player.base_position.y * 0.2
+        # When attacking, prioritize calculated position over base (more fluid).
+        # Confidence drives how much a player commits to the advanced, ball-
+        # seeking position vs. retreating toward their safe base position -
+        # a rattled player hides, a confident one demands involvement.
+        ball_seeking = max(0.5, min(0.95, 0.8 + player.confidence * 0.15))
+        target_x = target_x * ball_seeking + player.base_position.x * (1 - ball_seeking)
+        target_y = target_y * ball_seeking + player.base_position.y * (1 - ball_seeking)
 
         # Push all outfield players forward when team has ball
         if ball_holder and ball_holder in [p for p in team.players]:
@@ -391,11 +405,14 @@ class MatchEngine:
         distance = player.position.distance_to(ball_pos)
 
         if distance < 20:
-            return 1.2  # Close to ball = urgent
+            base = 1.2  # Close to ball = urgent
         elif distance < 40:
-            return 1.0
+            base = 1.0
         else:
-            return 0.7  # Far from ball = less urgent
+            base = 0.7  # Far from ball = less urgent
+
+        # Confident players engage more urgently, rattled players drag their feet
+        return max(0.3, base + player.confidence * 0.15)
 
     def _resolve_ball_action(self, state: MatchState) -> Optional[MatchEvent]:
         """Resolve what happens with the ball"""
@@ -466,6 +483,9 @@ class MatchEngine:
         dribble_roles = ['lw', 'rw', 'st', 'cf', 'am']  # These roles dribble more
         is_dribbler_role = holder.role in dribble_roles
 
+        pressure = psychology.calculate_pressure(holder, state, defending_team)
+        sys1 = psychology.system1_weight(pressure.total, holder)
+
         # SHOOTING
         if in_shooting_range:
             shoot_chance = 0.25
@@ -475,6 +495,9 @@ class MatchEngine:
             # High composure = clinical finisher
             if holder.effective_attribute('composure') > 70:
                 shoot_chance += 0.1
+            # Confidence pulls the trigger; panic under pressure holds it back
+            shoot_chance += holder.confidence * 0.15 - sys1 * 0.1
+            shoot_chance = max(0.05, min(0.9, shoot_chance))
             if random.random() < shoot_chance:
                 return "shoot"
 
@@ -504,6 +527,11 @@ class MatchEngine:
         # Poor passer = dribble more
         if passing_skill < 50:
             dribble_chance += 0.1
+
+        # Confident players back themselves; instinct-dominant players under
+        # pressure retreat to the simplest option instead of taking a risk
+        dribble_chance += holder.confidence * 0.1 - sys1 * 0.1
+        dribble_chance = max(0.02, dribble_chance)
 
         if random.random() < dribble_chance:
             return "dribble"
@@ -744,6 +772,11 @@ class MatchEngine:
                       if d.position.distance_to(passer.position) < 10)
         under_pressure = pressure >= 2
 
+        # Psychological pressure: how much this passer is leaning on instinct
+        # (safe, comfort actions) vs. calm analysis (ambitious, forward play)
+        psych_pressure = psychology.calculate_pressure(passer, state, defending_team)
+        sys1 = psychology.system1_weight(psych_pressure.total, passer)
+
         # Score each passing option
         scored_lanes = []
         for target, quality in lanes:
@@ -753,21 +786,22 @@ class MatchEngine:
             y_diff = target.position.y - passer.position.y
 
             if y_diff > 10:
-                # Strong forward pass - big bonus
+                # Strong forward pass - big bonus, but it takes composure and
+                # confidence to actually play it under pressure
                 score *= 1.5 + (directness / 100)
+                score *= max(0.4, 1.0 + passer.confidence * 0.2 - sys1 * 0.3)
             elif y_diff > 0:
                 # Slight forward - small bonus
                 score *= 1.2
             elif y_diff > -10:
                 # Lateral pass - slight penalty unless under pressure
-                if not under_pressure:
-                    score *= 0.6
+                score *= LATERAL_PRESSURE_MULTIPLIER[under_pressure]
+                score *= 1.0 + sys1 * 0.2
             else:
                 # Backward pass - heavy penalty unless under pressure
-                if under_pressure:
-                    score *= 0.8  # Still ok when pressed
-                else:
-                    score *= 0.2  # Discourage safe backward passes
+                score *= BACKWARD_PRESSURE_MULTIPLIER[under_pressure]
+                # Rattled, instinct-dominant players overvalue the safe ball
+                score *= 1.0 + sys1 * 0.4
 
             # Avoid passing back to last passer (anti ping-pong)
             if state.ball.passer == target:

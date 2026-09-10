@@ -107,6 +107,7 @@ class Player:
     base_position: Position = field(default_factory=lambda: Position(50, 50))
     fatigue: float = 0.0  # 0-100, higher = more tired
     has_ball: bool = False
+    confidence: float = 0.0  # -1 to 1: current psychological momentum/form
 
     # Role assignment
     role: str = "default"
@@ -150,12 +151,12 @@ class Team:
 
     @property
     def outfield_players(self) -> List[Player]:
-        return [p for p in self.players if p.role != "goalkeeper"]
+        return [p for p in self.players if p.role != "gk"]
 
     @property
     def goalkeeper(self) -> Optional[Player]:
         for p in self.players:
-            if p.role == "goalkeeper":
+            if p.role == "gk":
                 return p
         return None
 
