@@ -12,7 +12,6 @@ No test framework dependency - plain asserts, run directly:
 """
 import os
 import sys
-import random
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -90,8 +89,7 @@ def test_shooting_range_is_direction_aware():
 
 
 def test_away_shot_targets_the_low_goal():
-    random.seed(11)
-    engine = MatchEngine(SimulationConfig(randomness=0.0))
+    engine = MatchEngine(SimulationConfig(randomness=0.0, seed=11))
     for _ in range(50):
         shooter = make_player("AwaySt", role="st", x=50, y=8,
                               shooting=95, composure=95)
@@ -122,8 +120,7 @@ def test_dribbler_moves_toward_attacked_goal():
 
 
 def test_attacking_movement_pushes_away_striker_toward_low_y():
-    random.seed(5)
-    engine = MatchEngine(SimulationConfig())
+    engine = MatchEngine(SimulationConfig(seed=5))
     striker = make_player("AwaySt", role="st", x=50, y=50)
     defender = make_player("HomeCB", role="cb", x=50, y=20)
     away = Team(name="A", players=[striker], attacks_up=False)
@@ -137,8 +134,7 @@ def test_attacking_movement_pushes_away_striker_toward_low_y():
 
 
 def test_defending_movement_keeps_away_cb_near_high_goal():
-    random.seed(5)
-    engine = MatchEngine(SimulationConfig())
+    engine = MatchEngine(SimulationConfig(seed=5))
     cb = make_player("AwayCB", role="cb", x=50, y=80)  # flipped base
     away = Team(name="A", players=[cb], attacks_up=False)
     home = Team(name="H", players=[])
@@ -201,8 +197,7 @@ def test_towards_center_x_is_side_aware():
 # ---------------------------------------------------------------------------
 
 def _run_matches(n, seed, on_event=None, minutes=90):
-    random.seed(seed)
-    config = SimulationConfig(ticks_per_minute=6, randomness=0.3)
+    config = SimulationConfig(ticks_per_minute=6, randomness=0.3, seed=seed)
     engine = MatchEngine(config)
     totals = {"home_goals": 0, "away_goals": 0}
     for _ in range(n):

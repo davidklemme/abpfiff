@@ -48,22 +48,35 @@ No framework needed - plain asserts:
 ```bash
 python3 tests/test_psychology.py   # Phase 1 psychological engine
 python3 tests/test_direction.py    # Attack-direction / symmetry correctness
+python3 tests/test_restarts.py     # Out-of-play restarts + kickoffs + determinism
 ```
 
 See `docs/reviews/` for engine reviews and the current roadmap.
 
 ## Architecture
 
+The engine is composed of small, independently testable components typed
+as Protocols (see `interfaces.py`) and injected into the orchestrator:
+
 ```
 anstoss-engine/
 ├── models.py       # Core data structures (Player, Team, Position, etc.)
+├── interfaces.py   # Component Protocols (MovementModel, ActionResolver, ...)
 ├── spatial.py      # Space control and passing lane calculations
 ├── tactics.py      # Tactical principles system
-├── engine.py       # Match simulation loop
+├── movement.py     # RoleMovementModel: off-ball player movement
+├── ball_actions.py # DefaultActionResolver: pass/shot/dribble/duel resolution
+├── restarts.py     # SimpleRestartPolicy: kickoffs, throw-ins, goal kicks, corners
+├── conditioning.py # Fatigue and momentum models
+├── psychology.py   # Phase 1 psychological engine (pressure, confidence)
+├── engine.py       # MatchEngine: thin orchestrator + tick/minute/match loops
 ├── teams.py        # Team/player creation utilities
 ├── visualizer.py   # ASCII rendering
 └── demo.py         # Demo script
 ```
+
+All simulation randomness flows through one injected `random.Random`, so
+`SimulationConfig(seed=...)` reproduces a match exactly.
 
 ## Tactical Principles System
 
@@ -103,7 +116,7 @@ my_tactics = TacticalSetup(
 
 ## TODO / Future Ideas
 
-- [ ] Rules-of-the-game minimum: throw-ins, corners, goal kicks as possession restarts
+- [x] Rules-of-the-game minimum: throw-ins, corners, goal kicks as possession restarts
 - [ ] Statistical validation harness (goals/shots/possession vs. real-football bands)
 - [ ] Lead passes / receiver movement (ball model currently locks target at kick time)
 - [ ] Set pieces (corners, free kicks)

@@ -14,7 +14,7 @@ are out of scope here - see the design doc for the full model.
 from dataclasses import dataclass
 from typing import Optional
 
-from models import Player, Team, MatchEvent, MatchState, Position
+from models import Player, Team, MatchEvent, MatchState
 
 
 @dataclass

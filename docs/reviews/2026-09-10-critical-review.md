@@ -150,11 +150,20 @@ product) has zero direct coverage; nothing would have caught F1–F5.
    - both teams score over a multi-match sample;
    - identical mirrored teams produce roughly symmetric outcomes.
 
-### Phase 0.5 — Rules-of-the-game minimum (next)
+### Phase 0.5 — Rules-of-the-game minimum (this branch, implemented)
 
 Ball out of play → possession restart (throw-in/goal-kick/corner as simple
-possession events, no set-piece simulation yet); kickoff formations reset on goals
-(exists) and period starts.
+possession events, no set-piece simulation yet): deflected tackles and
+miscontrols can put the ball over a line, wide shots restart as goal kicks,
+and parried saves can go behind for corners. Kickoffs happen automatically
+at match start, after goals, and for the away team at the start of the
+second half. Implemented alongside a structural decomposition: the
+monolithic `MatchEngine` is now a thin orchestrator over Protocol-typed
+components (`interfaces.py`) — `movement.RoleMovementModel`,
+`ball_actions.DefaultActionResolver`, `restarts.SimpleRestartPolicy`,
+`conditioning.FatigueModel`/`MomentumModel` — each testable in isolation,
+sharing one injected `random.Random` so seeded matches reproduce exactly.
+Covered by `tests/test_restarts.py`.
 
 ### Phase 1.5 — Validation harness (next, before any new features)
 
