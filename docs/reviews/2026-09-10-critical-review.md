@@ -165,13 +165,23 @@ components (`interfaces.py`) — `movement.RoleMovementModel`,
 sharing one injected `random.Random` so seeded matches reproduce exactly.
 Covered by `tests/test_restarts.py`.
 
-### Phase 1.5 — Validation harness (next, before any new features)
+### Phase 1.5 — Validation harness (implemented)
 
-A `validate.py` that runs N seeded matches and reports goals/match, shots/match,
-possession split, pass-completion %, against target bands from real football
-(≈2.5–3.0 goals, 20–30 shots, 70–85% pass completion). Wire into CI as a
-regression gate. Add pytest + GitHub Actions; keep the no-dependency test style
-runnable both ways.
+`validate.py` runs N seeded matches (identical mirrored teams) and reports
+goals/match, shots, pass completion, possession split, symmetry and restart
+counts against two bands per metric: a **gate band** (regression guard; CI
+fails on breach via `validate.py --gate`) and a **target band** (real-football
+realism goal; warns only). GitHub Actions (`.github/workflows/ci.yml`) runs
+all five test suites plus the gate. The harness immediately paid off: it
+exposed a 29% end-to-end pass completion. That drove the introduction of
+`execution.py` — a shared execution-quality model where every contested
+action (pass, first touch, interception, dribble duel, shot, save) is
+resolved from the full factor stack (skill, physical fatigue, pressure vs.
+composure, confidence, team momentum) instead of flat per-action constants;
+`tests/test_execution.py` pins each factor's direction of effect. Current
+state: all gates green; shots/corners/throw-ins still below realism targets —
+that gap is attack-construction quality, i.e. the Phase 2 ball model, not
+constant tuning.
 
 ### Phase 2 — Ball model, then psychology Phase 2
 
