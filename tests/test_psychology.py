@@ -226,15 +226,15 @@ def test_rattled_player_positions_closer_to_base_than_confident_player():
         state.ball.position = Position(55, 55)
         return player, opponents, state
 
-    # _attacking_movement adds random jitter; seed identically so confidence
-    # is the only thing that differs between the two calls.
+    # attacking movement adds random jitter; seed the engine's own RNG
+    # identically so confidence is the only thing that differs.
     rattled, opp1, state1 = build(confidence=-0.8)
-    random.seed(7)
+    engine.rng.seed(7)
     tx_r, ty_r = engine._attacking_movement(rattled, state1.ball.position, None,
                                              state1.home_team, opp1, state1)
 
     confident, opp2, state2 = build(confidence=0.8)
-    random.seed(7)
+    engine.rng.seed(7)
     tx_c, ty_c = engine._attacking_movement(confident, state2.ball.position, None,
                                              state2.home_team, opp2, state2)
 
@@ -245,8 +245,7 @@ def test_rattled_player_positions_closer_to_base_than_confident_player():
 
 
 def test_confident_player_shoots_more_often_than_rattled_player():
-    random.seed(42)
-    engine = MatchEngine(SimulationConfig(randomness=0.0))
+    engine = MatchEngine(SimulationConfig(randomness=0.0, seed=42))
 
     def attempt_counts(confidence, trials=300):
         shooter = make_player(name="Striker", role="st", confidence=confidence, composure=50)

@@ -145,9 +145,38 @@ class Team:
     players: List[Player]
     tactics: 'TacticalSetup' = None
 
+    # Attack direction: True = attacks toward y=100, False = toward y=0.
+    # Away teams get False via teams.flip_team_positions().
+    attacks_up: bool = True
+
     # Calculated metrics
     possession: float = 50.0
     momentum: float = 50.0
+
+    def frame_y(self, y: float) -> float:
+        """Map an absolute pitch y into this team's attacking frame.
+
+        In the frame the team always attacks toward y=100, so tactical logic
+        can be written once for both teams. The mapping is its own inverse:
+        frame_y(frame_y(y)) == y, so it also converts frame targets back to
+        absolute coordinates.
+        """
+        return y if self.attacks_up else 100.0 - y
+
+    @property
+    def attack_sign(self) -> float:
+        """+1 if this team attacks toward increasing y, else -1."""
+        return 1.0 if self.attacks_up else -1.0
+
+    @property
+    def attacking_goal(self) -> Position:
+        """The goal this team is shooting at."""
+        return Position(50.0, 100.0 if self.attacks_up else 0.0)
+
+    @property
+    def own_goal(self) -> Position:
+        """The goal this team is defending."""
+        return Position(50.0, 0.0 if self.attacks_up else 100.0)
 
     @property
     def outfield_players(self) -> List[Player]:

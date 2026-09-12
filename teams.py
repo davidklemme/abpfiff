@@ -34,12 +34,24 @@ def flip_team_positions(team: Team) -> Team:
     """
     Flip a team's positions so they face the opposite direction.
     Used for away teams - their GK should be at y=95, attackers at low y.
+    Also flips the team's attack direction so the engine knows which goal
+    the team is shooting at.
     """
     for player in team.players:
         # Flip y coordinate: 0 <-> 100
         player.base_position.y = 100 - player.base_position.y
         player.position.y = 100 - player.position.y
+    team.attacks_up = not team.attacks_up
     return team
+
+
+def _stable_hash(text: str) -> int:
+    """Deterministic string hash (builtin hash() varies per process
+    via PYTHONHASHSEED, which made team strength non-reproducible)."""
+    value = 0
+    for char in text:
+        value = (value * 31 + ord(char)) % 1_000_003
+    return value
 
 
 def create_442_team(name: str, skill_level: int = 70) -> Team:
@@ -48,7 +60,7 @@ def create_442_team(name: str, skill_level: int = 70) -> Team:
     var = 15  # Variation
 
     def attr(offset=0):
-        return max(30, min(95, base + offset + (hash(name) % var) - var // 2))
+        return max(30, min(95, base + offset + (_stable_hash(name) % var) - var // 2))
 
     players = [
         # Goalkeeper
@@ -73,7 +85,7 @@ def create_442_team(name: str, skill_level: int = 70) -> Team:
         create_player(f"{name} CM", 8, "cm", 65, 45,
                       passing=attr(5), workrate=attr(10), defending=attr(-5)),
         create_player(f"{name} RM", 7, "rm", 85, 50,
-                      pace=attr(5), dribbling=attr(), crossing=attr() if hasattr(Player, 'crossing') else attr()),
+                      pace=attr(5), dribbling=attr(), stamina=attr(5)),
 
         # Attack
         create_player(f"{name} ST", 9, "st", 40, 75,

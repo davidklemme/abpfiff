@@ -14,7 +14,7 @@ are out of scope here - see the design doc for the full model.
 from dataclasses import dataclass
 from typing import Optional
 
-from models import Player, Team, MatchEvent, MatchState, Position
+from models import Player, Team, MatchEvent, MatchState
 
 
 @dataclass
@@ -130,7 +130,11 @@ def _feedback_shot(event: MatchEvent, state: MatchState) -> None:
 
 
 def _feedback_miss(event: MatchEvent, state: MatchState) -> None:
-    goal = Position(50, 100)
+    # Measure "clear chance" against the goal the shooter was attacking
+    if event.player is not None and event.player in state.away_team.players:
+        goal = state.away_team.attacking_goal
+    else:
+        goal = state.home_team.attacking_goal
     dist = event.position.distance_to(goal) if event.position else 30
     key = "miss_clear_chance" if dist < CLEAR_CHANCE_DISTANCE else "miss"
     _adjust(event.player, key)
