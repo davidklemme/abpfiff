@@ -53,6 +53,9 @@ class Aggregate:
     throw_ins: int = 0
     corners: int = 0
     goal_kicks: int = 0
+    crosses: int = 0
+    fouls: int = 0
+    yellow_cards: int = 0
 
     def add(self, m: MatchMetrics) -> None:
         self.home_goals += m.home.goals
@@ -66,6 +69,9 @@ class Aggregate:
         self.throw_ins += m.home.throw_ins + m.away.throw_ins
         self.corners += m.home.corners + m.away.corners
         self.goal_kicks += m.home.goal_kicks + m.away.goal_kicks
+        self.crosses += m.home.crosses + m.away.crosses
+        self.fouls += m.home.fouls + m.away.fouls
+        self.yellow_cards += m.home.yellow_cards + m.away.yellow_cards
 
     # -- derived metrics ----------------------------------------------------
 
@@ -97,6 +103,15 @@ class Aggregate:
     def throw_ins_per_match(self) -> float:
         return self.throw_ins / self.matches
 
+    def crosses_per_match(self) -> float:
+        return self.crosses / self.matches
+
+    def fouls_per_match(self) -> float:
+        return self.fouls / self.matches
+
+    def yellows_per_match(self) -> float:
+        return self.yellow_cards / self.matches
+
 
 # Bands for identical mirrored teams ("balanced" vs "balanced").
 # GATE bounds hold for the current engine (regression guard); TARGET bounds
@@ -117,6 +132,12 @@ BANDS: List[Band] = [
          gate_lo=0.5, gate_hi=25.0, target_lo=6.0, target_hi=14.0),
     Band("Throw-ins / match", Aggregate.throw_ins_per_match,
          gate_lo=0.5, gate_hi=80.0, target_lo=25.0, target_hi=50.0),
+    Band("Crosses / match", Aggregate.crosses_per_match,
+         gate_lo=1.0, gate_hi=60.0, target_lo=15.0, target_hi=40.0),
+    Band("Fouls / match", Aggregate.fouls_per_match,
+         gate_lo=2.0, gate_hi=60.0, target_lo=18.0, target_hi=30.0),
+    Band("Yellow cards / match", Aggregate.yellows_per_match,
+         gate_lo=0.0, gate_hi=12.0, target_lo=2.0, target_hi=6.0),
 ]
 
 

@@ -23,10 +23,11 @@ class SituationEmbedding:
     time_criticality: float  # 0-1: clock plus scoreline urgency
     spatial_density: float   # 0-1: opponents crowding the ball
     support: float           # 0-1: passing options available
+    width: float = 0.5       # 0-1: how wide the holder is (0=center, 1=touchline)
 
     def as_tuple(self) -> Tuple[float, ...]:
         return (self.pressure, self.progression, self.time_criticality,
-                self.spatial_density, self.support)
+                self.spatial_density, self.support, self.width)
 
 
 def situation_for(holder: Player, attacking_team: Team, defending_team: Team,
@@ -60,6 +61,7 @@ def situation_for(holder: Player, attacking_team: Team, defending_team: Team,
         time_criticality=time_criticality,
         spatial_density=spatial_density,
         support=support,
+        width=min(1.0, abs(holder.position.x - 50.0) / 50.0),
     )
 
 

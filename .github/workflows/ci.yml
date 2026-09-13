@@ -25,6 +25,8 @@ jobs:
           python tests/test_visualizer.py
           python tests/test_decisions.py
           python tests/test_learning.py
+          python tests/test_attacking_play.py
+          python tests/test_discipline.py
 
       - name: Statistical validation gate
         run: python validate.py --matches 20 --seed 42 --gate

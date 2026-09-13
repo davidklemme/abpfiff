@@ -55,6 +55,8 @@ python3 tests/test_ball_model.py   # Lead passes, receiver runs, no-teleport pos
 python3 tests/test_visualizer.py   # ASCII rendering + colors
 python3 tests/test_decisions.py    # Dual-process decisions + behavioral separation
 python3 tests/test_learning.py     # Experience learning: anchors, traumas, memory
+python3 tests/test_attacking_play.py  # Crossing (vector-driven) + clearances
+python3 tests/test_discipline.py   # Fouls, cards, free kicks, stable identity
 python3 validate.py --matches 20 --seed 42 --gate   # Statistical regression gate
 ```
 
@@ -141,7 +143,9 @@ my_tactics = TacticalSetup(
 - [x] Rules-of-the-game minimum: throw-ins, corners, goal kicks as possession restarts
 - [x] Statistical validation harness (goals/shots/possession vs. real-football bands)
 - [x] Lead passes / receiver movement (passes aim into space; receivers run to meet the ball)
-- [ ] Set pieces (corners, free kicks)
+- [x] Fouls, yellow/red cards, sending-off, free-kick restarts
+- [x] Crossing and clearances (vector-driven attack construction)
+- [ ] Set-piece delivery (corner/free-kick routines, penalties)
 - [ ] Substitutions and fatigue management
 - [ ] Individual player instructions
 - [ ] Opposition analysis / tactical adaptation

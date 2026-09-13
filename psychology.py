@@ -52,6 +52,10 @@ CONFIDENCE_DELTAS = {
     "turnover": -0.10,
     "tackle_won": 0.10,
     "tackled": -0.10,
+    "foul_committed": -0.03,
+    "foul_won": 0.03,
+    "yellow_card": -0.10,
+    "red_card": -0.30,
 }
 
 # Clear-chance range: shots closer than this to goal count as "should score".
@@ -167,6 +171,15 @@ def _feedback_tackle(event: MatchEvent, state: MatchState) -> None:
     _adjust(event.target_player, "tackled")
 
 
+def _feedback_foul(event: MatchEvent, state: MatchState) -> None:
+    _adjust(event.player, "foul_committed")   # the fouler
+    _adjust(event.target_player, "foul_won")  # the fouled player
+
+
+def _feedback_card(event: MatchEvent, state: MatchState) -> None:
+    _adjust(event.player, event.event_type)  # "yellow_card" / "red_card"
+
+
 # Dispatch table: event_type -> handler. Replaces an if/elif chain so adding
 # a new observable outcome is a one-line addition, not a new branch.
 FEEDBACK_HANDLERS = {
@@ -179,6 +192,9 @@ FEEDBACK_HANDLERS = {
     "interception": _feedback_interception,
     "turnover": _feedback_turnover,
     "tackle": _feedback_tackle,
+    "foul": _feedback_foul,
+    "yellow_card": _feedback_card,
+    "red_card": _feedback_card,
 }
 
 

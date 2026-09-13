@@ -25,6 +25,23 @@ BACKWARD_PRESSURE_MULTIPLIER = {True: 0.8, False: 0.2}
 # control - possession never teleports.
 CONTROL_RADIUS = 6.0
 
+# A defender intercepting a lofted ball near their own goal often can't
+# control it - they clear it, sometimes behind for a corner or over the
+# touchline for a throw-in.
+CLEARANCE_ZONE_FRAME_Y = 22.0     # own-goal frame y below which headers are clearances
+CLEARANCE_CHANCE = 0.5            # chance the interception is a clearance
+CLEARANCE_OUT_CHANCE = 0.45       # cleared ball goes out of play
+CLEARANCE_BEHIND_CHANCE = 0.4     # ...of which: behind for a corner (else throw-in)
+
+
+def box_targets(holder: Player, attacking_team: Team) -> list:
+    """Teammates positioned around the box (frame-aware) a cross could
+    find - generous edges, since the delivery leads them further in."""
+    f = attacking_team.frame_y
+    return [p for p in attacking_team.players
+            if p is not holder and p.role != "gk"
+            and f(p.position.y) > 66 and 22 < p.position.x < 78]
+
 
 class PassResolver:
     """Resolves everything between 'pass chosen' and 'ball controlled'."""
@@ -181,6 +198,32 @@ class PassResolver:
                 return target
         return scored_lanes[0][0]
 
+    def resolve_cross(self, state: MatchState, crosser: Player,
+                      attacking_team: Team,
+                      defending_team: Team) -> Optional[MatchEvent]:
+        """Whip a lofted ball toward the best-placed teammate in the box."""
+        targets = box_targets(crosser, attacking_team)
+        if not targets:
+            return None  # nobody to aim for; resolver falls back to a pass
+
+        # Best target: the one with the most room around them
+        def room(player):
+            return min((d.position.distance_to(player.position)
+                        for d in defending_team.players), default=50.0)
+
+        target = max(targets, key=room)
+        lead = self.lead_position(crosser, target, attacking_team)
+        state.ball.start_pass(crosser, target, is_lofted=True, lead_position=lead)
+        return MatchEvent(
+            minute=state.minute,
+            event_type="cross",
+            player=crosser,
+            target_player=target,
+            position=crosser.position,
+            success=True,
+            description=f"{crosser.name} crosses toward {target.name}"
+        )
+
     # -- in flight ------------------------------------------------------------
 
     def check_interception(self, state: MatchState) -> Optional[MatchEvent]:
@@ -222,20 +265,71 @@ class PassResolver:
                 base_chance += (pace - 50) / 400
 
                 if self.rng.random() < base_chance:
-                    ball.give_to(defender)
-                    state.switch_possession()
-
-                    return MatchEvent(
-                        minute=state.minute,
-                        event_type="interception",
-                        player=defender,
-                        target_player=ball.passer,
-                        position=ball.position,
-                        success=True,
-                        description=f"{defender.name} intercepts the pass"
-                    )
+                    return self._resolve_interception(state, defender,
+                                                      defending_team)
 
         return None
+
+    def _resolve_interception(self, state: MatchState, defender: Player,
+                              defending_team: Team) -> MatchEvent:
+        """The defender got to the ball first: controlled interception, or
+        - for lofted balls near their own goal - a desperate clearance
+        that can go anywhere, including out of play."""
+        ball = state.ball
+        interception = MatchEvent(
+            minute=state.minute,
+            event_type="interception",
+            player=defender,
+            target_player=ball.passer,
+            position=ball.position,
+            success=True,
+            description=f"{defender.name} intercepts the pass"
+        )
+
+        near_own_goal = defending_team.frame_y(defender.position.y) < CLEARANCE_ZONE_FRAME_Y
+        is_lofted = ball.state == BallState.AIR_PASS
+        if is_lofted and near_own_goal and self.rng.random() < CLEARANCE_CHANCE:
+            self.publish(interception, state)
+            return self.clear_danger(state, defender, defending_team)
+
+        ball.give_to(defender)
+        state.switch_possession()
+        return interception
+
+    def clear_danger(self, state: MatchState, defender: Player,
+                     defending_team: Team) -> MatchEvent:
+        """Head/hack the ball away under pressure: upfield, over the
+        touchline, or behind the goal for a corner. `defending_team` is
+        the clearing player's own team (frame of reference)."""
+        clearance = MatchEvent(
+            minute=state.minute,
+            event_type="clearance",
+            player=defender,
+            position=defender.position,
+            success=True,
+            description=f"{defender.name} clears the danger"
+        )
+
+        if self.rng.random() < CLEARANCE_OUT_CHANCE:
+            self.publish(clearance, state)
+            if self.rng.random() < CLEARANCE_BEHIND_CHANCE:
+                # Behind their own goal line: corner
+                raw = Position(10.0 if self.rng.random() < 0.5 else 90.0,
+                               defending_team.frame_y(-1.0))
+            else:
+                # Over the nearest touchline: throw-in
+                raw = Position(-1.0 if defender.position.x < 50 else 101.0,
+                               defender.position.y)
+            return self.restarts.resolve_out_of_bounds(state, raw, defender)
+
+        # Hoofed upfield: lands loose in their own attacking half
+        f = defending_team.frame_y
+        target = Position(
+            max(5.0, min(95.0, defender.position.x + self.rng.uniform(-20, 20))),
+            f(min(95.0, f(defender.position.y) + self.rng.uniform(25, 45)))
+        )
+        state.ball.launch_clear(defender, target)
+        return clearance
 
     # -- arrival ---------------------------------------------------------------
 

@@ -254,12 +254,57 @@ chains for role movement, `DefaultActionResolver` split into
 threshold tables for utility bonuses, shared test runner/fixtures in
 `tests/support.py`).
 
-### Phase 4 — Social systems (next)
+### In-game mechanics round (implemented)
+
+Prioritized ahead of temporal continuity (see below): attack
+construction and discipline, with an explicit architectural rule applied
+throughout — **the vector principle**: behavioral tendencies flow
+through embedding dimensions, factor stacks and similarity, never
+through boolean gates or bespoke if/else formulas. Hard branches are
+reserved for the laws of the game (bounds, restarts, cards).
+
+- **Crossing**: `width` became a dimension of `SituationEmbedding`;
+  cross utility is continuous in width × progression (no positional
+  boolean), winger instinct prototypes match wide/advanced situations by
+  similarity, strikers crash the box when the ball is wide and high, and
+  `PassResolver.resolve_cross` delivers a lofted lead ball to the
+  best-placed box target. Result: ~26 crosses/match and pass completion
+  inside the target band (0.82) for the first time — wide players stopped
+  forcing risky central passes.
+- **Clearances**: defenders intercepting lofted balls near their own
+  goal, and holders pressed deep, clear their lines — upfield (a real
+  flight via `Ball.launch_clear`), over the touchline (throw-in), or
+  behind (corner).
+- **Discipline**: a challenge mechanic drives duels off *measured
+  defender proximity* (the abstract press score proved dead code — it
+  never exceeded 0.31). Fouls are intent (aggression) × mistimed
+  execution (1 − execution quality, the shared factor stack), so tired,
+  pressured, rattled challengers foul more with no bespoke formula.
+  Yellow/red cards with sending off (team plays short-handed), free-kick
+  restarts, and card confidence deltas. Penalties and direct free kicks
+  are still TODO.
+- **Stable identity** (temporal insurance): `Player.player_id`,
+  `MindRegistry` keyed by identity rather than object, and distinct
+  identities for mirror matchups — the substrate for match-to-match and
+  career continuity, implemented now because retrofitting identity later
+  touches everything.
+
+### Temporal continuity (deliberately deferred)
+
+Everything measured so far is per-match by construction; there is no
+continuation mechanism yet (no match/season boundary semantics, no
+serialization, no season loop). Decision recorded 2026-09: finish
+in-game mechanics first — continuation amplifies whatever the match loop
+produces. Order when we return: identity (done) → match/season boundary
+protocol (doc's Layer 1–4 consolidation) → mind serialization (doc §3.8)
+→ Season runner → careers/Phase 4 social systems.
+
+### Phase 4 — Social systems (later)
 
 Mentor relationships, team culture buffers on feedback, validation
-profiles, and save/load serialization of the psychology layers, per the
-architecture doc — plus continued statistical calibration toward the
-realism targets (shots, corners, throw-ins).
+profiles, per the architecture doc — after temporal continuity, plus
+continued statistical calibration toward the realism targets (shots,
+corners, throw-ins, foul volume).
 
 ### Housekeeping (any time)
 

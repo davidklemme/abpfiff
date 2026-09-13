@@ -45,6 +45,17 @@ def flip_team_positions(team: Team) -> Team:
     return team
 
 
+def make_identity_distinct(team: Team, suffix: str) -> Team:
+    """Rename a team and its players (after attribute generation) so their
+    player_ids never collide with a same-styled opponent. Attributes are
+    untouched, so mirror matchups stay perfectly symmetric."""
+    team.name = f"{team.name}{suffix}"
+    for player in team.players:
+        player.name = f"{player.name}{suffix}"
+        player.player_id = f"{player.name}#{player.number}"
+    return team
+
+
 def _stable_hash(text: str) -> int:
     """Deterministic string hash (builtin hash() varies per process
     via PYTHONHASHSEED, which made team strength non-reproducible)."""
@@ -174,6 +185,8 @@ def create_tactical_matchup(style1: str, style2: str,
     away = away_formation(f"Team {style2[:3].upper()}", skill2)
     away.tactics = get_tactical_setup(style2)
     flip_team_positions(away)  # Flip so they face opposite direction
+    # Same-style matchups would otherwise produce colliding player_ids
+    make_identity_distinct(away, " B")
 
     return home, away
 

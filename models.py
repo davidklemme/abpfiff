@@ -109,8 +109,21 @@ class Player:
     has_ball: bool = False
     confidence: float = 0.0  # -1 to 1: current psychological momentum/form
 
+    # Discipline
+    yellow_cards: int = 0
+    sent_off: bool = False
+
     # Role assignment
     role: str = "default"
+
+    # Stable identity: minds, memories and (later) career persistence key
+    # off this, never off object identity. Derived from name+number unless
+    # provided explicitly.
+    player_id: str = ""
+
+    def __post_init__(self):
+        if not self.player_id:
+            self.player_id = f"{self.name}#{self.number}"
 
     def influence_at(self, pos: Position) -> float:
         """Calculate player's defensive/control influence at a position"""
@@ -297,6 +310,20 @@ class Ball:
             self.flight_speed = 18  # Faster on ground
         # ceil, not int: the counter must outlast the full distance so the
         # ball really reaches the aim point (arrival is positional)
+        self.flight_ticks_remaining = max(1, math.ceil(distance / self.flight_speed))
+
+    def launch_clear(self, kicker: Player, target_pos: Position):
+        """Hoof the ball toward an area with no intended receiver - it
+        travels as a lofted ball and runs loose where it lands."""
+        if self.holder:
+            self.holder.has_ball = False
+        self.holder = None
+        self.passer = kicker
+        self.target_player = None
+        self.target_position = Position(target_pos.x, target_pos.y)
+        self.state = BallState.AIR_PASS
+        self.flight_speed = 14
+        distance = kicker.position.distance_to(self.target_position)
         self.flight_ticks_remaining = max(1, math.ceil(distance / self.flight_speed))
 
     def start_shot(self, shooter: Player, target_pos: Position):

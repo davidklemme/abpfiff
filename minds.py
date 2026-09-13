@@ -37,15 +37,20 @@ class PlayerMind:
 
 
 class MindRegistry:
-    """Lazily creates and stores one PlayerMind per player."""
+    """Lazily creates and stores one PlayerMind per player identity.
+
+    Keyed by Player.player_id (stable identity), not object identity, so
+    a recreated squad with the same identities finds its accumulated
+    minds - the substrate for match-to-match and career continuity."""
 
     def __init__(self):
-        self._minds: Dict[int, PlayerMind] = {}
+        self._minds: Dict[str, PlayerMind] = {}
 
     def mind_for(self, player: Player) -> PlayerMind:
-        key = id(player)
-        mind = self._minds.get(key)
+        mind = self._minds.get(player.player_id)
         if mind is None:
             mind = PlayerMind(player=player, bank=default_bank_for(player))
-            self._minds[key] = mind
+            self._minds[player.player_id] = mind
+        else:
+            mind.player = player  # rebind to the current incarnation
         return mind
