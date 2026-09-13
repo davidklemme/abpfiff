@@ -16,6 +16,8 @@ from models import (
 from spatial import SpaceControl
 from restarts import SimpleRestartPolicy, is_out_of_bounds
 from execution import execution_quality, contest
+from situation import situation_for
+from decisions import DecisionContext, DecisionModel, DualProcessDecisionModel
 import psychology
 
 
@@ -48,12 +50,14 @@ class DefaultActionResolver:
                  restart_policy: Optional[SimpleRestartPolicy] = None,
                  rng: Optional[random.Random] = None,
                  randomness: float = 0.3,
-                 publish: Optional[Callable[[MatchEvent, MatchState], None]] = None):
+                 publish: Optional[Callable[[MatchEvent, MatchState], None]] = None,
+                 decision_model: Optional[DecisionModel] = None):
         self.space_control = space_control or SpaceControl(resolution=10)
         self.restarts = restart_policy or SimpleRestartPolicy(rng=rng)
         self.rng = rng or random.Random()
         self.randomness = randomness
         self.publish = publish or (lambda event, state: None)
+        self.decision_model = decision_model or DualProcessDecisionModel(rng=self.rng)
 
     # -- main entry ---------------------------------------------------------
 
@@ -97,95 +101,64 @@ class DefaultActionResolver:
         if pressure_value > 0.8 and self.rng.random() < 0.3:
             return self._resolve_turnover(state, holder, "pressed")
 
-        # Decision: shoot, dribble, or pass (context-aware)
+        # Decision: shoot, dribble, or pass (dual-process decision model)
         action = self.decide_action(holder, attacking_team, defending_team, state)
 
-        if action == "shoot":
+        if action == "shoot" and self.in_shooting_range(holder.position, attacking_team):
             return self.resolve_shot(state, holder, attacking_team, defending_team)
         elif action == "dribble":
             return self._resolve_dribble(state, holder, attacking_team, defending_team)
         else:
-            return self._resolve_pass(state, holder, attacking_team, defending_team)
+            # pass_forward / pass_safe bias the pass-target scoring;
+            # anything else (a stub model's plain "pass") is neutral
+            bias = {"pass_forward": 0.5, "pass_safe": -0.5}.get(action, 0.0)
+            return self._resolve_pass(state, holder, attacking_team, defending_team,
+                                      forward_bias=bias)
 
     # -- decision -----------------------------------------------------------
 
     def decide_action(self, holder: Player, attacking_team: Team,
                       defending_team: Team, state: MatchState) -> str:
-        """
-        Decide whether to shoot, dribble, or pass based on context.
-        Returns 'shoot', 'dribble', or 'pass'.
-        """
-        # Calculate factors
-        in_shooting_range = self.in_shooting_range(holder.position, attacking_team)
-        space_ahead = self._space_ahead(holder, attacking_team, defending_team)
-        dribbling_skill = holder.effective_attribute('dribbling')
-        passing_skill = holder.effective_attribute('passing')
+        """Choose the holder's action via the injected DecisionModel.
+        Returns 'shoot', 'dribble', 'pass_forward' or 'pass_safe'."""
+        context = self.build_decision_context(holder, attacking_team,
+                                              defending_team, state)
+        return self.decision_model.decide(context)
 
-        # Find nearest defender
+    def build_decision_context(self, holder: Player, attacking_team: Team,
+                               defending_team: Team,
+                               state: MatchState) -> DecisionContext:
+        """Assemble everything the decision layer needs about this moment."""
+        lanes = self.space_control.find_passing_lanes(
+            holder, attacking_team.players, defending_team.players
+        )
+
+        f = attacking_team.frame_y
+        holder_y = f(holder.position.y)
+        best_forward = max((q for t, q in lanes
+                            if f(t.position.y) - holder_y > 5), default=0.0)
+        best_safe = max((q for t, q in lanes
+                         if f(t.position.y) - holder_y <= 5), default=0.0)
+
         nearest_def_dist = min(
             (p.position.distance_to(holder.position) for p in defending_team.players),
             default=50
         )
 
-        # Role-based tendencies
-        dribble_roles = ['lw', 'rw', 'st', 'cf', 'am']  # These roles dribble more
-        is_dribbler_role = holder.role in dribble_roles
-
-        pressure = psychology.calculate_pressure(holder, state, defending_team)
-        sys1 = psychology.system1_weight(pressure.total, holder)
-
-        # SHOOTING
-        if in_shooting_range:
-            shoot_chance = 0.25
-            # Better angle = more likely to shoot
-            if 30 < holder.position.x < 70:
-                shoot_chance += 0.15
-            # High composure = clinical finisher
-            if holder.effective_attribute('composure') > 70:
-                shoot_chance += 0.1
-            # Confidence pulls the trigger; panic under pressure holds it back
-            shoot_chance += holder.confidence * 0.15 - sys1 * 0.1
-            shoot_chance = max(0.05, min(0.9, shoot_chance))
-            if self.rng.random() < shoot_chance:
-                return "shoot"
-
-        # DRIBBLING
-        dribble_chance = 0.15  # Base chance
-
-        # More space ahead = dribble more
-        if space_ahead > 20:
-            dribble_chance += 0.25
-        elif space_ahead > 10:
-            dribble_chance += 0.15
-
-        # Good dribbler = dribble more
-        if dribbling_skill > 75:
-            dribble_chance += 0.2
-        elif dribbling_skill > 60:
-            dribble_chance += 0.1
-
-        # Dribbling role = dribble more
-        if is_dribbler_role:
-            dribble_chance += 0.15
-
-        # Nearest defender far away = dribble more
-        if nearest_def_dist > 15:
-            dribble_chance += 0.15
-
-        # Poor passer = dribble more
-        if passing_skill < 50:
-            dribble_chance += 0.1
-
-        # Confident players back themselves; instinct-dominant players under
-        # pressure retreat to the simplest option instead of taking a risk
-        dribble_chance += holder.confidence * 0.1 - sys1 * 0.1
-        dribble_chance = max(0.02, dribble_chance)
-
-        if self.rng.random() < dribble_chance:
-            return "dribble"
-
-        # Default to pass
-        return "pass"
+        return DecisionContext(
+            holder=holder,
+            attacking_team=attacking_team,
+            defending_team=defending_team,
+            state=state,
+            situation=situation_for(holder, attacking_team, defending_team,
+                                    state, lanes),
+            in_shooting_range=self.in_shooting_range(holder.position, attacking_team),
+            space_ahead=self._space_ahead(holder, attacking_team, defending_team),
+            nearest_defender_dist=nearest_def_dist,
+            lanes=lanes,
+            best_forward_lane=best_forward,
+            best_safe_lane=best_safe,
+        )
 
     def in_shooting_range(self, pos: Position, attacking_team: Team) -> bool:
         """Check if position is in shooting range of the attacked goal"""
@@ -457,8 +430,13 @@ class DefaultActionResolver:
     # -- passing ------------------------------------------------------------
 
     def _resolve_pass(self, state: MatchState, passer: Player,
-                      attacking_team: Team, defending_team: Team) -> Optional[MatchEvent]:
-        """Resolve a pass attempt"""
+                      attacking_team: Team, defending_team: Team,
+                      forward_bias: float = 0.0) -> Optional[MatchEvent]:
+        """Resolve a pass attempt.
+
+        `forward_bias` carries the decision layer's intent into target
+        selection: positive (pass_forward) upweights progressive options,
+        negative (pass_safe) upweights the safe ball."""
         # Find passing options
         lanes = self.space_control.find_passing_lanes(
             passer, attacking_team.players, defending_team.players
@@ -496,18 +474,22 @@ class DefaultActionResolver:
                 # confidence to actually play it under pressure
                 score *= 1.5 + (directness / 100)
                 score *= max(0.4, 1.0 + passer.confidence * 0.2 - sys1 * 0.3)
+                score *= max(0.2, 1.0 + forward_bias * 0.6)
             elif y_diff > 0:
                 # Slight forward - small bonus
                 score *= 1.2
+                score *= max(0.2, 1.0 + forward_bias * 0.3)
             elif y_diff > -10:
                 # Lateral pass - slight penalty unless under pressure
                 score *= LATERAL_PRESSURE_MULTIPLIER[under_pressure]
                 score *= 1.0 + sys1 * 0.2
+                score *= max(0.2, 1.0 - forward_bias * 0.3)
             else:
                 # Backward pass - heavy penalty unless under pressure
                 score *= BACKWARD_PRESSURE_MULTIPLIER[under_pressure]
                 # Rattled, instinct-dominant players overvalue the safe ball
                 score *= 1.0 + sys1 * 0.4
+                score *= max(0.2, 1.0 - forward_bias * 0.5)
 
             # Avoid passing back to last passer (anti ping-pong)
             if state.ball.passer == target:

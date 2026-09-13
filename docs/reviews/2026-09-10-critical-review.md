@@ -198,15 +198,46 @@ The ASCII visualizer also gained color (light-gray pitch, blue home / red
 away, yellow ball) and one unified absolute coordinate mapping for both
 teams.
 
-### Phase 2b — Psychology Phase 2 (next)
+### Phase 2b — Psychology Phase 2: decision depth (implemented)
 
-Decision depth per the architecture doc: a `DecisionModel` seam behind
-`DefaultActionResolver` (the current probability tree becomes the trivial
-implementation), `SituationEmbedding` as a pure function over existing
-signals, seeded instinct banks, System 1/2 blending via the existing
-`system1_weight`, and behavioral-separation bands in the validation
-harness (archetypes must produce measurably different action
-distributions). Same thin-slice discipline as psychology Phase 1.
+The hardcoded shoot/dribble/pass probability tree is gone. Decisions now
+flow through a `DecisionModel` Protocol injected into
+`DefaultActionResolver` (`decisions.py`), default implementation the
+dual-process model from the architecture doc:
+
+- `situation.py`: `SituationEmbedding` — pressure, frame-aware
+  progression, time criticality, spatial density, passing support — a
+  pure function over signals the engine already computes (the doc's
+  body_orientation dimension is deferred; the engine doesn't model
+  facing).
+- `instincts.py`: role-seeded `InstinctBank` (System 1 comfort actions,
+  e.g. finisher's box instinct, organizer's keep-it-simple under
+  pressure), queried by situation similarity, shaped by aggression at
+  seeding and tilted bold/safe by live confidence. Learning from
+  experience is Phase 3.
+- `decisions.py`: System 2 utilities per action (personality-warped by
+  aggression and vision, porting the old tree's tuning) blended with the
+  System 1 instinct query by the existing `psychology.system1_weight` —
+  pressure against effective composure decides how much instinct
+  overrides analysis. Action vocabulary grew to
+  shoot/dribble/pass_forward/pass_safe; the pass intents carry into
+  target scoring as a forward bias.
+
+Acceptance criteria met and pinned in `tests/test_decisions.py`
+(behavioral separation): the low-composure/high-aggression archetype
+takes bold actions >1.3x the metronome's rate in identical situations;
+pressure pushes nervy players to the safe ball while composed players
+keep playing forward; role banks and confidence tilt verified. All
+statistical gate bands stay green.
+
+### Phase 3 — Learning & memory (next)
+
+Per the architecture doc: outcomes feed back into the instinct bank
+(success anchors, trauma with context-similarity resurfacing),
+confidence momentum across matches, validation profiles, and the
+persistence layer. The seeded banks and situation embeddings from 2b are
+the substrate; add behavioral-separation bands to validate.py so archetype
+divergence is CI-gated, not just unit-tested.
 
 ### Housekeeping (any time)
 
