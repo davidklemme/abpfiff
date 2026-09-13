@@ -151,14 +151,22 @@ def test_personality_creates_decision_variance():
         chaos_shares, metronome_shares)
 
 
-def test_pressure_pushes_low_composure_players_to_the_safe_ball():
-    nervy = make_player("Nervy", role="cm", composure=35, aggression=50)
-    model = DualProcessDecisionModel(rng=random.Random(7))
+def test_pressure_pushes_players_to_the_safe_ball_below_saturation():
+    """Rising pressure drives the player toward the safe ball WHILE the
+    System 1/2 blend still has room to shift (mid composure, moderate
+    load). Very low composure now saturates the blend almost everywhere
+    - such players live on instinct, and further load only scrambles it
+    (psychology.system1_integrity; see tests/test_cognition.py)."""
+    steady = make_player("Steady", role="cm", composure=60, aggression=50)
 
+    # Paired comparison: each condition gets an identically-seeded model,
+    # so the only difference between the samples is the pressure
     calm_shares = action_shares(
-        model, lambda: make_context(nervy, pressure=0.1, density=0.2))
+        DualProcessDecisionModel(rng=random.Random(7)),
+        lambda: make_context(steady, pressure=0.15, density=0.2))
     pressed_shares = action_shares(
-        model, lambda: make_context(nervy, pressure=0.9, density=0.9))
+        DualProcessDecisionModel(rng=random.Random(7)),
+        lambda: make_context(steady, pressure=0.5, density=0.5))
 
     assert pressed_shares.get("pass_safe", 0) > calm_shares.get("pass_safe", 0)
 

@@ -84,6 +84,27 @@ def system1_weight(pressure_total: float, player: Player) -> float:
     return max(0.0, min(1.0, pressure_total / comp))
 
 
+# How strongly unabsorbed load degrades System 1's discrimination
+S1_OVERLOAD_IMPACT = 0.8
+
+
+def overload(load_total: float, player: Player) -> float:
+    """Load beyond what composure absorbs (0 when coping)."""
+    return max(0.0, load_total - effective_composure(player))
+
+
+def system1_integrity(load_total: float, player: Player) -> float:
+    """How intact System 1 is under load (0-1).
+
+    Overload doesn't only shift the blend toward instinct - past what
+    composure can absorb it degrades instinct ITSELF: trained
+    automatisms lose discrimination and misfire. Composure is the
+    absorption capacity, so the composed keep their sharpness under
+    load that scrambles the nervy - the same gate that preserves their
+    System 2 access."""
+    return max(0.0, 1.0 - overload(load_total, player) * S1_OVERLOAD_IMPACT)
+
+
 def calculate_pressure(player: Player, state: MatchState, opponents: Team) -> PressureContext:
     """Basic Phase 1 pressure: spatial (nearest opponent) + tactical (scoreline/time)."""
     nearest_opp = min(
@@ -102,9 +123,16 @@ def calculate_pressure(player: Player, state: MatchState, opponents: Team) -> Pr
     losing_margin = max(0.0, opp_score - own_score)
     tactical = min(1.0, time_factor * 0.15 + losing_margin * (0.3 + time_factor * 0.25))
 
+    # Psychological pressure: the environment's mental load through this
+    # player's sensitivity (models.Environment). One channel, felt
+    # everywhere pressure is felt - decision blending, tunnel vision,
+    # execution quality - with no special-cased branches downstream.
+    psychological = state.environment.psychological_load(player.sensitivity)
+
     # Temporal pressure is a flat placeholder for Phase 1 - refining "time to
     # decide" requires action-level timing that doesn't exist yet.
-    return PressureContext(spatial=spatial, temporal=0.25, tactical=tactical, psychological=0.0)
+    return PressureContext(spatial=spatial, temporal=0.25, tactical=tactical,
+                           psychological=psychological)
 
 
 def _adjust(player: Optional[Player], key: str) -> None:

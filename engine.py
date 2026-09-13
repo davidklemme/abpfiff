@@ -80,6 +80,8 @@ class MatchEngine:
 
         self.event_handlers: List[Callable] = []
         self.tick_handlers: List[Callable] = []
+        # Per-player last positions, for deriving motion (facing) each tick
+        self._last_positions: dict = {}
 
     # -- events -------------------------------------------------------------
 
@@ -151,11 +153,40 @@ class MatchEngine:
         psychology.decay_all(state, minutes_elapsed=minutes_elapsed)
         self.learning.decay(minutes_elapsed)
 
-        # 5. Notify per-tick observers
+        # 5. Update motion state (smoothed velocity -> facing for perception)
+        self._update_velocities(state)
+
+        # 6. Notify per-tick observers
         for handler in self.tick_handlers:
             handler(state)
 
         return events
+
+    # A player covers at most ~3 units/tick under their own power; any
+    # larger step is a restart teleport (kickoff reset, throw-in spot,
+    # cross-match reuse of the engine) and must not become "motion".
+    MAX_PHYSICAL_STEP = 6.0
+
+    def _update_velocities(self, state: MatchState):
+        """Derive each player's smoothed velocity from their movement this
+        tick. Orientation is state, not an attribute: perception reads the
+        facing straight from where the player is actually heading.
+
+        Teleports (restarts placing players, goal kickoffs resetting all
+        22, a reused engine starting a fresh match) are detected by step
+        size and reset the motion state instead of polluting the facing."""
+        for player in state.home_team.players + state.away_team.players:
+            last = self._last_positions.get(player.player_id)
+            if last is not None:
+                dx = player.position.x - last[0]
+                dy = player.position.y - last[1]
+                if (dx * dx + dy * dy) ** 0.5 > self.MAX_PHYSICAL_STEP:
+                    player.velocity_x = player.velocity_y = 0.0
+                else:
+                    player.velocity_x = 0.6 * player.velocity_x + 0.4 * dx
+                    player.velocity_y = 0.6 * player.velocity_y + 0.4 * dy
+            self._last_positions[player.player_id] = (player.position.x,
+                                                      player.position.y)
 
     def _simulate_minute(self, state: MatchState) -> List[MatchEvent]:
         """Simulate one minute of play"""
@@ -176,6 +207,11 @@ class MatchEngine:
             player.fatigue *= 0.5  # Some recovery
         state.home_team.attacks_up = not state.home_team.attacks_up
         state.away_team.attacks_up = not state.away_team.attacks_up
+
+        # Side swap invalidates motion history (positions jumped)
+        self._last_positions.clear()
+        for player in state.home_team.players + state.away_team.players:
+            player.velocity_x = player.velocity_y = 0.0
 
         # Second half: the away team kicks off (home kicked off the first)
         self.restarts.kickoff(state, home_kicks=False)
