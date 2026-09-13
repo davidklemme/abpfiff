@@ -29,6 +29,12 @@ TACKLE_DEFLECTION_CHANCE = 0.3
 # Chance a save is parried behind for a corner instead of held
 SAVE_PARRY_CHANCE = 0.3
 
+# How close a player must be to a ball to take it under control. Possession
+# never teleports: an arriving pass the receiver didn't reach runs loose,
+# and a loose ball must be run down before it can be claimed.
+CONTROL_RADIUS = 6.0
+LOOSE_BALL_CLAIM_RADIUS = 4.0
+
 
 class DefaultActionResolver:
     """Resolves the ball each tick; returns at most one primary MatchEvent.
@@ -289,6 +295,12 @@ class DefaultActionResolver:
             ball.make_loose()
             return None
 
+        # The receiver must actually be there: a lead pass they never
+        # reached runs loose where it landed instead of teleporting to them
+        if target.position.distance_to(ball.position) > CONTROL_RADIUS:
+            ball.make_loose()
+            return None
+
         # First touch from the receiver's full factor stack: a tired,
         # rattled or pressured receiver miscontrols far more often
         if target in state.home_team.players:
@@ -421,7 +433,11 @@ class DefaultActionResolver:
         all_players = state.home_team.players + state.away_team.players
         nearest = min(all_players, key=lambda p: p.position.distance_to(ball_pos))
 
-        # Give ball to nearest player (with some randomness based on reactions)
+        # Nobody close enough yet: the ball stays loose and players run it
+        # down through the movement model (loose-ball chase)
+        if nearest.position.distance_to(ball_pos) > LOOSE_BALL_CLAIM_RADIUS:
+            return None
+
         state.ball.give_to(nearest)
 
         # Update possession
@@ -532,10 +548,11 @@ class DefaultActionResolver:
         success = self.rng.random() < success_prob
 
         if success:
-            # Start ball flight - don't give instantly
-            distance = passer.position.distance_to(target.position)
+            # Start ball flight toward a lead position ahead of the receiver
+            lead = self.lead_position(passer, target, attacking_team)
+            distance = passer.position.distance_to(lead)
             is_lofted = distance > 25  # Long passes are lofted
-            state.ball.start_pass(passer, target, is_lofted)
+            state.ball.start_pass(passer, target, is_lofted, lead_position=lead)
             return MatchEvent(
                 minute=state.minute,
                 event_type="pass",
@@ -548,6 +565,23 @@ class DefaultActionResolver:
         else:
             # Interception or misplaced
             return self._resolve_turnover(state, passer, "misplaced_pass")
+
+    def lead_position(self, passer: Player, receiver: Player,
+                      attacking_team: Team) -> Position:
+        """Aim point for a pass: ahead of the receiver, into space they can
+        actually reach during the ball's flight (frame-aware, so 'ahead'
+        means toward the goal their team attacks)."""
+        f = attacking_team.frame_y
+        distance = passer.position.distance_to(receiver.position)
+        flight_speed = 12 if distance > 25 else 18  # mirrors Ball flight speeds
+        flight_ticks = max(1, int(distance / flight_speed))
+
+        # Lead only as far as the receiver can run while the ball travels
+        receiver_speed = (receiver.effective_attribute('pace') / 100) * 2.5
+        lead = min(8.0, flight_ticks * receiver_speed * 0.8)
+
+        lead_y_frame = min(98.0, f(receiver.position.y) + lead)
+        return Position(receiver.position.x, f(lead_y_frame)).clamp()
 
     # -- dribbling / duels --------------------------------------------------
 

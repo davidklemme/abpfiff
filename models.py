@@ -268,26 +268,36 @@ class Ball:
         self.flight_ticks_remaining = 0
         self.passer = None
 
-    def start_pass(self, passer: Player, target: Player, is_lofted: bool = False):
-        """Start a pass - ball will travel over time"""
+    def start_pass(self, passer: Player, target: Player, is_lofted: bool = False,
+                   lead_position: Optional[Position] = None):
+        """Start a pass - ball will travel over time.
+
+        `lead_position` aims the ball ahead of the receiver (a lead pass
+        into space); the receiver is expected to move to meet it. Without
+        it the ball is played to the receiver's feet at kick time.
+        """
         if self.holder:
             self.holder.has_ball = False
         self.holder = None
         self.passer = passer
         self.target_player = target
-        self.target_position = Position(target.position.x, target.position.y)
+        if lead_position is not None:
+            self.target_position = Position(lead_position.x, lead_position.y)
+        else:
+            self.target_position = Position(target.position.x, target.position.y)
 
         # Calculate flight time based on distance
-        distance = passer.position.distance_to(target.position)
+        distance = passer.position.distance_to(self.target_position)
 
         if is_lofted:
             self.state = BallState.AIR_PASS
             self.flight_speed = 12  # Slower in air
-            self.flight_ticks_remaining = max(1, int(distance / self.flight_speed))
         else:
             self.state = BallState.GROUND_PASS
             self.flight_speed = 18  # Faster on ground
-            self.flight_ticks_remaining = max(1, int(distance / self.flight_speed))
+        # ceil, not int: the counter must outlast the full distance so the
+        # ball really reaches the aim point (arrival is positional)
+        self.flight_ticks_remaining = max(1, math.ceil(distance / self.flight_speed))
 
     def start_shot(self, shooter: Player, target_pos: Position):
         """Start a shot toward goal"""
@@ -301,10 +311,15 @@ class Ball:
 
         distance = shooter.position.distance_to(target_pos)
         self.flight_speed = 25  # Shots are fast
-        self.flight_ticks_remaining = max(1, int(distance / self.flight_speed))
+        self.flight_ticks_remaining = max(1, math.ceil(distance / self.flight_speed))
 
     def update_flight(self) -> bool:
-        """Update ball position during flight. Returns True if ball arrived."""
+        """Update ball position during flight. Returns True if ball arrived.
+
+        Arrival is positional - the ball has actually reached its aim point
+        - with the tick counter only as a safety cap. (A counter-only check
+        used to land balls up to one flight-speed short of the target.)
+        """
         if self.state == BallState.HELD or self.target_position is None:
             return False
 
@@ -315,7 +330,8 @@ class Ball:
         self.position = self.position.move_towards(self.target_position, self.flight_speed)
         self.flight_ticks_remaining -= 1
 
-        return self.flight_ticks_remaining <= 0
+        arrived_at_target = self.position.distance_to(self.target_position) < 1e-6
+        return arrived_at_target or self.flight_ticks_remaining <= 0
 
     def is_in_flight(self) -> bool:
         """Check if ball is traveling"""

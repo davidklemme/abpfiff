@@ -8,7 +8,7 @@ so the same rules serve both directions of play.
 import random
 from typing import Callable, Optional
 
-from models import MatchState, Player, Position, Team
+from models import BallState, MatchState, Player, Position, Team
 from spatial import SpaceControl
 from tactics import MovementInstruction
 
@@ -31,10 +31,33 @@ class RoleMovementModel:
         """Apply tactical movements for one team"""
         tactics = team.tactics
         other_team = state.away_team if team is state.home_team else state.home_team
+        ball = state.ball
+
+        # The intended receiver of an in-flight pass breaks from role
+        # movement and runs to meet the ball at its arrival point
+        receiver = None
+        if (ball.is_in_flight() and ball.state != BallState.SHOT
+                and ball.target_player in team.players):
+            receiver = ball.target_player
+
+        # A loose ball gets run down by the nearest outfield player
+        chaser = None
+        if ball.state == BallState.LOOSE:
+            candidates = team.outfield_players or team.players
+            chaser = min(candidates,
+                         key=lambda p: p.position.distance_to(ball.position))
 
         for player in team.players:
             # Skip ball holder - they move via dribble
             if player.has_ball:
+                continue
+
+            if player is receiver:
+                self._sprint_towards(player, ball.target_position or ball.position)
+                continue
+
+            if player is chaser:
+                self._sprint_towards(player, ball.position)
                 continue
 
             # Get active principles for this player
@@ -49,6 +72,11 @@ class RoleMovementModel:
             else:
                 # Smart default movement based on role and game state
                 self._apply_default_movement(player, state, team, team_attacking, other_team)
+
+    def _sprint_towards(self, player: Player, target: Position) -> None:
+        """Full-effort run to a spot (meeting a pass, chasing a loose ball)."""
+        max_speed = (player.effective_attribute('pace') / 100) * 3
+        player.position = player.position.move_towards(target, max_speed).clamp()
 
     def apply_movement(self, player: Player, movement: MovementInstruction,
                        state: MatchState, team: Team) -> None:
