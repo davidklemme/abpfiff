@@ -230,14 +230,36 @@ pressure pushes nervy players to the safe ball while composed players
 keep playing forward; role banks and confidence tilt verified. All
 statistical gate bands stay green.
 
-### Phase 3 — Learning & memory (next)
+### Phase 3 — Learning & memory (implemented, first slice)
 
-Per the architecture doc: outcomes feed back into the instinct bank
-(success anchors, trauma with context-similarity resurfacing),
-confidence momentum across matches, validation profiles, and the
-persistence layer. The seeded banks and situation embeddings from 2b are
-the substrate; add behavioral-separation bands to validate.py so archetype
-divergence is CI-gated, not just unit-tested.
+Outcomes now write into the instinct banks. `minds.py` gives decisions
+and learning one shared substrate per player (`PlayerMind` = bank +
+pending decision); `learning.py` pairs each on-ball decision with the
+outcome event that resolves it (table-driven: one `OutcomeRule` per event
+type) and calls `InstinctBank.learn`: successes form **success anchors**
+that reinforce the action in similar situations, failures form **trauma**
+entries that suppress it. Similar memories merge instead of duplicating
+(prototype blending), banks cap at 12 learned memories (weakest pruned),
+and memories decay slowly with simulated time. Confidence now selects
+between memory classes at query time per doc §5.3: confident players
+sample their success anchors, rattled players feel their traumas.
+Memories persist across matches when the same Player objects are reused.
+The behavioral-separation check is now a CI gate in `validate.py`
+(archetype bold-action ratio ≥ 1.15). Deferred to later slices:
+validation profiles, mentor transmission, serialization.
+
+A code-quality pass landed alongside (dispatch tables over if/elif
+chains for role movement, `DefaultActionResolver` split into
+`PassResolver`/`ShotResolver` with a coordinator + stable facades,
+threshold tables for utility bonuses, shared test runner/fixtures in
+`tests/support.py`).
+
+### Phase 4 — Social systems (next)
+
+Mentor relationships, team culture buffers on feedback, validation
+profiles, and save/load serialization of the psychology layers, per the
+architecture doc — plus continued statistical calibration toward the
+realism targets (shots, corners, throw-ins).
 
 ### Housekeeping (any time)
 

@@ -26,6 +26,9 @@ from movement import RoleMovementModel
 from ball_actions import DefaultActionResolver
 from restarts import SimpleRestartPolicy
 from conditioning import FatigueModel, MomentumModel
+from decisions import DualProcessDecisionModel
+from minds import MindRegistry
+from learning import ExperienceLearning
 from tactics import MovementInstruction
 import psychology
 
@@ -59,12 +62,16 @@ class MatchEngine:
         self.restarts = restart_policy or SimpleRestartPolicy(rng=self.rng)
         self.movement = movement or RoleMovementModel(
             space_control=self.space_control, rng=self.rng)
+        # Decisions read the same minds that outcomes write (learning)
+        self.minds = MindRegistry()
+        self.learning = ExperienceLearning(self.minds)
         self.actions = actions or DefaultActionResolver(
             space_control=self.space_control,
             restart_policy=self.restarts,
             rng=self.rng,
             randomness=self.config.randomness,
             publish=self._publish_event,
+            decision_model=DualProcessDecisionModel(rng=self.rng, minds=self.minds),
         )
         self.conditioning: List[ConditioningModel] = conditioning if conditioning is not None else [
             FatigueModel(self.config.fatigue_rate),
@@ -92,9 +99,11 @@ class MatchEngine:
 
     def _publish_event(self, event: MatchEvent, state: MatchState):
         """Emit a secondary event (e.g. the miscontrol before a restart)
-        and feed it to psychology - used by components mid-resolution."""
+        and feed it to psychology and learning - used by components
+        mid-resolution."""
         self._emit_event(event)
         psychology.process_feedback(event, state)
+        self.learning.on_event(event, state)
 
     # -- simulation loops ---------------------------------------------------
 
@@ -131,13 +140,16 @@ class MatchEngine:
             events.append(action_event)
             self._emit_event(action_event)
             psychology.process_feedback(action_event, state)
+            self.learning.on_event(action_event, state)
 
         # 3. Physical bookkeeping (fatigue, momentum)
         for model in self.conditioning:
             model.update(state, events)
 
-        # 4. Confidence drifts back toward neutral over time
-        psychology.decay_all(state, minutes_elapsed=1.0 / self.config.ticks_per_minute)
+        # 4. Psychology fades: confidence toward neutral, memories slowly
+        minutes_elapsed = 1.0 / self.config.ticks_per_minute
+        psychology.decay_all(state, minutes_elapsed=minutes_elapsed)
+        self.learning.decay(minutes_elapsed)
 
         # 5. Notify per-tick observers
         for handler in self.tick_handlers:

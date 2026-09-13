@@ -1,15 +1,18 @@
 """
 Instinct bank: a player's fast, automatic action preferences (System 1),
-queried by situation similarity (psychological-engine.md section 3.5,
-Phase 2 slice).
+queried by situation similarity, written by experience
+(psychological-engine.md sections 3.5-3.7).
 
-Phase 2 banks are SEEDED from role and attributes ("comfort actions" -
-what this kind of player reaches for without thinking); Phase 3 will make
-them learned from experience (success anchors, trauma). The action
-vocabulary matches the decision layer: shoot, dribble, pass_forward,
-pass_safe.
+Banks start SEEDED from role and attributes ("comfort actions" - what
+this kind of player reaches for without thinking). Outcomes then write
+into them: successes form success anchors that reinforce an action in
+similar situations, failures form trauma entries that suppress it.
+Confidence decides which memory class dominates retrieval (section 5.3):
+confident players sample their success anchors, rattled players feel
+their traumas and retreat to the safe ball. The action vocabulary matches
+the decision layer: shoot, dribble, pass_forward, pass_safe.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List
 
 from models import Player
@@ -20,9 +23,22 @@ SAFE_ACTIONS = ("pass_safe",)
 ALL_ACTIONS = BOLD_ACTIONS + SAFE_ACTIONS
 
 # How strongly confidence tilts instinct sampling between bold comfort
-# actions and the safe default (section 5.3 of the design doc, simplified:
-# no learned anchors yet, so confidence tilts the seeded weights).
+# actions and the safe default (design doc section 5.3).
 CONFIDENCE_TILT = 0.35
+
+# Source-level sampling: how strongly confidence amplifies success anchors
+# and how strongly being rattled amplifies trauma (section 5.3).
+ANCHOR_CONFIDENCE_GAIN = 0.5
+TRAUMA_RATTLED_GAIN = 0.5
+
+# Learning shape: new memories merge into a sufficiently similar existing
+# memory of the same action and kind instead of piling up duplicates.
+MEMORY_MERGE_SIMILARITY = 0.75
+PROTOTYPE_BLEND = 0.2          # how far a merge moves the prototype
+MAX_LEARNED_MEMORIES = 12      # per bank; weakest dropped beyond this
+MIN_MEMORY_STRENGTH = 0.05     # decayed below this = forgotten
+
+LEARNED_SOURCES = ("experience", "trauma")
 
 
 @dataclass
@@ -32,7 +48,23 @@ class Instinct:
     prototype: SituationEmbedding
     action_weights: Dict[str, float]
     strength: float = 1.0  # How ingrained (0-1); seeds are fully ingrained
-    source: str = "role"   # "role" now; "experience"/"mentor" in Phase 3
+    source: str = "role"   # "role" | "experience" | "trauma"
+
+
+def _source_factor(source: str, confidence: float) -> float:
+    """Confidence-dependent sampling weight per memory class."""
+    if source == "experience":  # success anchors: confident players lean in
+        return 1.0 + ANCHOR_CONFIDENCE_GAIN * max(0.0, confidence)
+    if source == "trauma":      # trauma: rattled players feel it more
+        return 1.0 + TRAUMA_RATTLED_GAIN * max(0.0, -confidence)
+    return 1.0
+
+
+def _blend_prototypes(old: SituationEmbedding,
+                      new: SituationEmbedding) -> SituationEmbedding:
+    keep = 1.0 - PROTOTYPE_BLEND
+    return SituationEmbedding(*(keep * a + PROTOTYPE_BLEND * b
+                                for a, b in zip(old.as_tuple(), new.as_tuple())))
 
 
 class InstinctBank:
@@ -41,18 +73,22 @@ class InstinctBank:
     def __init__(self, instincts: List[Instinct]):
         self.instincts = instincts
 
+    # -- retrieval (System 1) ------------------------------------------------
+
     def query(self, situation: SituationEmbedding,
               confidence: float = 0.0) -> Dict[str, float]:
         """Similarity-weighted action preferences for this situation.
 
-        Confidence tilts the result: a confident player's instinct reaches
-        for bold comfort actions, a rattled player's for the safe ball.
-        Returns weights normalized to sum 1 (uniform if the bank is empty).
+        Confidence acts twice: it selects between memory classes (success
+        anchors vs trauma) and tilts the final mix bold vs safe. Returns
+        weights normalized to sum 1 (uniform if the bank is empty).
         """
         weights = {action: 0.0 for action in ALL_ACTIONS}
 
         for instinct in self.instincts:
-            match = similarity(situation, instinct.prototype) * instinct.strength
+            match = (similarity(situation, instinct.prototype)
+                     * instinct.strength
+                     * _source_factor(instinct.source, confidence))
             for action, weight in instinct.action_weights.items():
                 weights[action] = weights.get(action, 0.0) + match * weight
 
@@ -68,6 +104,61 @@ class InstinctBank:
         if total <= 0:
             return {action: 1.0 / len(ALL_ACTIONS) for action in ALL_ACTIONS}
         return {action: weight / total for action, weight in weights.items()}
+
+    # -- learning (written by outcomes) ---------------------------------------
+
+    def learn(self, situation: SituationEmbedding, action: str,
+              valence: float, significance: float) -> None:
+        """Record an outcome: positive valence reinforces `action` in
+        similar situations (success anchor), negative suppresses it
+        (trauma). Similar memories merge instead of duplicating."""
+        if valence == 0 or action not in ALL_ACTIONS:
+            return
+
+        source = "experience" if valence > 0 else "trauma"
+        gained = min(0.6, abs(valence) * significance)
+
+        merged = self._merge_into_existing(situation, action, source, gained)
+        if not merged:
+            weight = 1.0 if valence > 0 else -1.0
+            self.instincts.append(Instinct(
+                name=f"{source}_{action}",
+                prototype=situation,
+                action_weights={action: weight},
+                strength=min(0.6, 0.15 + gained),
+                source=source,
+            ))
+        self._prune()
+
+    def _merge_into_existing(self, situation: SituationEmbedding, action: str,
+                             source: str, gained: float) -> bool:
+        for instinct in self.instincts:
+            if (instinct.source == source
+                    and action in instinct.action_weights
+                    and similarity(situation, instinct.prototype) >= MEMORY_MERGE_SIMILARITY):
+                instinct.strength = min(1.0, instinct.strength + gained * 0.5)
+                instinct.prototype = _blend_prototypes(instinct.prototype, situation)
+                return True
+        return False
+
+    def _prune(self) -> None:
+        learned = [i for i in self.instincts if i.source in LEARNED_SOURCES]
+        if len(learned) <= MAX_LEARNED_MEMORIES:
+            return
+        weakest = min(learned, key=lambda i: i.strength)
+        self.instincts.remove(weakest)
+
+    def decay(self, factor: float) -> None:
+        """Fade learned memories (seeds don't fade); forget the negligible."""
+        for instinct in self.instincts:
+            if instinct.source in LEARNED_SOURCES:
+                instinct.strength *= factor
+        self.instincts = [i for i in self.instincts
+                          if i.source not in LEARNED_SOURCES
+                          or i.strength >= MIN_MEMORY_STRENGTH]
+
+    def learned_memories(self) -> List[Instinct]:
+        return [i for i in self.instincts if i.source in LEARNED_SOURCES]
 
 
 # ---------------------------------------------------------------------------
