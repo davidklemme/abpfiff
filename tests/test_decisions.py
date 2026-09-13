@@ -152,13 +152,19 @@ def test_personality_creates_decision_variance():
 
 
 def test_pressure_pushes_low_composure_players_to_the_safe_ball():
+    """Firm pressure - below total overload - drives the nervy player to
+    the safe ball. (At crushing load, overload scrambles even the safe
+    habit: psychology.system1_integrity; see tests/test_cognition.py.)"""
     nervy = make_player("Nervy", role="cm", composure=35, aggression=50)
-    model = DualProcessDecisionModel(rng=random.Random(7))
 
+    # Paired comparison: each condition gets an identically-seeded model,
+    # so the only difference between the samples is the pressure
     calm_shares = action_shares(
-        model, lambda: make_context(nervy, pressure=0.1, density=0.2))
+        DualProcessDecisionModel(rng=random.Random(7)),
+        lambda: make_context(nervy, pressure=0.1, density=0.2))
     pressed_shares = action_shares(
-        model, lambda: make_context(nervy, pressure=0.9, density=0.9))
+        DualProcessDecisionModel(rng=random.Random(7)),
+        lambda: make_context(nervy, pressure=0.75, density=0.7))
 
     assert pressed_shares.get("pass_safe", 0) > calm_shares.get("pass_safe", 0)
 

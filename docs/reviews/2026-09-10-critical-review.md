@@ -312,6 +312,45 @@ value (high-vision squads complete measurably more). Body orientation
 direction as a proxy; teammate-familiarity priors (learned expectations
 about specific teammates' runs) are a natural Phase 4 extension.
 
+### Cognitive load round (implemented)
+
+Load is now a core mechanism, not a bolt-on, with attribute discipline
+decided explicitly (new attribute only for a stable capacity with
+independent variance that can't be derived):
+
+- **Environment** (`models.Environment`): one per-match vector —
+  visibility, stakes, crowd intensity — neutral by default. Converted to
+  personal mental load via the new **`sensitivity`** attribute
+  (the doc's crowd/limelight sensitivity arriving early), feeding the
+  previously-always-zero `PressureContext.psychological`. Because
+  execution quality, tunnel vision and decision blending already key off
+  pressure, the limelight propagates everywhere with zero new branches.
+- **Familiarity = pre-exposure, queryable**: `InstinctBank.familiarity`
+  is the best similarity×strength over everything in the bank — role
+  schooling plus lived experience. Novel situations add load
+  (`NOVELTY_LOAD`); familiar ones are processed cheaply. Learned
+  memories ARE the veteran's fifty big nights: the same store serves
+  recall and recognition.
+- **Overload degrades System 1 itself**
+  (`psychology.system1_integrity`): load beyond what composure absorbs
+  blurs even trained automatisms toward indiscriminate noise — distinct
+  from the novelty fallback (instinct with nothing to say vs. instinct
+  unable to say it clearly). Composure is the absorption capacity for
+  both System 2 access and System 1 integrity. Below overload, pressure
+  drives the nervy to the safe ball; past it, even the safe habit
+  scrambles — both regimes are pinned in tests.
+- **Untrained instinct is still personality**: the novelty fallback is
+  aggression-tilted, so a reckless player's panic is rasher.
+- **Orientation is state, not an attribute**: facing derives from
+  smoothed motion (engine-tracked velocity); perception's directional
+  sight is continuous in the angle to facing, with the attack-direction
+  proxy as the stationary fallback. Turn-rate limits (agility) deferred
+  until a mechanic needs independent variance. **Visibility** is a
+  separate perceptual channel (murk narrows focus, more for the
+  sensitive). Height/occlusion and an intelligence trait (System 2
+  capacity under load, currently routed through composure) are noted as
+  future work, not attributes added on spec.
+
 ### Temporal continuity (deliberately deferred)
 
 Everything measured so far is per-match by construction; there is no

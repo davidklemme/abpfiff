@@ -23,9 +23,37 @@ from typing import Dict, List, Optional, Protocol, Tuple
 
 from models import MatchState, Player, Team
 from situation import SituationEmbedding
-from instincts import ALL_ACTIONS
+from instincts import ALL_ACTIONS, BOLD_ACTIONS, SAFE_ACTIONS
 from minds import MindRegistry
 import psychology
+
+# Cognitive load is a core mechanism: an unfamiliar situation costs
+# capacity on top of match pressure. Familiarity (instincts.familiarity -
+# role schooling plus lived experience) buys relief: veterans of fifty
+# big nights process the moment cheaply, debutants pay full price.
+NOVELTY_LOAD = 0.3
+
+# What System 1 offers when the bank has nothing for this situation:
+# the safe ball, mostly - but an untrained instinct is still THAT
+# player's instinct, so aggression tilts even the fallback (a reckless
+# player's panic is rasher than a cautious one's).
+SAFE_FALLBACK = {
+    action: (0.55 if action in SAFE_ACTIONS
+             else 0.45 / (len(ALL_ACTIONS) - len(SAFE_ACTIONS)))
+    for action in ALL_ACTIONS
+}
+
+
+def _fallback_for(player: Player) -> dict:
+    aggression_tilt = (player.aggression - 50) / 100.0  # -0.5 .. +0.5
+    tilted = {
+        action: weight * (1.0 + aggression_tilt * 0.6
+                          if action in BOLD_ACTIONS
+                          else 1.0 - aggression_tilt * 0.6)
+        for action, weight in SAFE_FALLBACK.items()
+    }
+    total = sum(tilted.values())
+    return {action: weight / total for action, weight in tilted.items()}
 
 
 @dataclass
@@ -149,12 +177,42 @@ class DualProcessDecisionModel:
         holder = context.holder
         mind = self.minds.mind_for(holder)
 
-        # System weights: pressure vs effective composure
-        sys1 = psychology.system1_weight(context.situation.pressure, holder)
+        # Cognitive load: match pressure (which already carries the
+        # environment through sensitivity) plus the cost of novelty.
+        # Pre-exposure - a bank that recognizes this situation - is load
+        # relief; the same lights weigh less the fiftieth time.
+        familiarity = mind.bank.familiarity(context.situation)
+        load = min(1.0, context.situation.pressure
+                   + NOVELTY_LOAD * (1.0 - familiarity))
+
+        # System weights: load vs effective composure
+        sys1 = psychology.system1_weight(load, holder)
 
         analysis = _normalize(self.utilities(context))
-        instinct = mind.bank.query(context.situation,
-                                   confidence=holder.confidence)
+
+        # System 1 can only offer what pre-exposure put there: in novel
+        # territory the instinct flattens toward the safe default -
+        # high load with no familiar patterns is the debutant freeze,
+        # not sudden boldness.
+        instinct_raw = mind.bank.query(context.situation,
+                                       confidence=holder.confidence)
+        fallback = _fallback_for(holder)
+        instinct = {
+            action: familiarity * instinct_raw.get(action, 0.0)
+                    + (1.0 - familiarity) * fallback[action]
+            for action in ALL_ACTIONS
+        }
+
+        # Overload degrades System 1 itself: load beyond what composure
+        # absorbs blurs even trained automatisms toward indiscriminate
+        # noise. (Novelty above = instinct has nothing to say; overload
+        # here = instinct can no longer say it clearly.)
+        integrity = psychology.system1_integrity(load, holder)
+        uniform = 1.0 / len(ALL_ACTIONS)
+        instinct = {
+            action: integrity * weight + (1.0 - integrity) * uniform
+            for action, weight in instinct.items()
+        }
 
         blended = {
             action: (1.0 - sys1) * analysis.get(action, 0.0)

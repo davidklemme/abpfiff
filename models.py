@@ -109,6 +109,17 @@ class Player:
     has_ball: bool = False
     confidence: float = 0.0  # -1 to 1: current psychological momentum/form
 
+    # Sensitivity to the environment (0-100): stakes, crowd, limelight.
+    # Converts match conditions into personal mental load - which consumes
+    # cognitive capacity (psychology.calculate_pressure). A trait, not a
+    # skill: it barely moves within a match.
+    sensitivity: int = 50
+
+    # Motion state (derived each tick by the engine, smoothed): the basis
+    # for facing/orientation. Not an attribute - orientation is state.
+    velocity_x: float = 0.0
+    velocity_y: float = 0.0
+
     # Discipline
     yellow_cards: int = 0
     sent_off: bool = False
@@ -388,11 +399,34 @@ class MatchEvent:
 
 
 @dataclass
+class Environment:
+    """The conditions a match is played under - one vector per match.
+
+    Defaults are neutral (a plain training-ground afternoon), so an
+    unconfigured match behaves exactly as before. Each dimension is a
+    factor input: players convert it to personal mental load through
+    their sensitivity, never through special-cased branches.
+    """
+    visibility: float = 1.0       # 0-1: floodlit night fog -> clear day
+    stakes: float = 0.0           # 0-1: friendly -> cup final
+    crowd_intensity: float = 0.0  # 0-1: empty ground -> cauldron
+
+    def psychological_load(self, sensitivity: float) -> float:
+        """How much mental load this environment puts on a player with
+        the given sensitivity (0-100). Insensitive veterans shrug off
+        the limelight; sensitive players feel every eye."""
+        exposure = self.stakes * 0.6 + self.crowd_intensity * 0.4
+        susceptibility = 0.3 + 1.4 * (sensitivity / 100.0)
+        return min(1.0, exposure * susceptibility)
+
+
+@dataclass
 class MatchState:
     """Current state of the match"""
     home_team: Team
     away_team: Team
     ball: Ball
+    environment: Environment = field(default_factory=Environment)
     minute: int = 0
     phase: Phase = Phase.BUILDUP
     events: List[MatchEvent] = field(default_factory=list)

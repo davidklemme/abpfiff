@@ -107,6 +107,21 @@ class InstinctBank:
             return {action: 1.0 / len(ALL_ACTIONS) for action in ALL_ACTIONS}
         return {action: weight / total for action, weight in weights.items()}
 
+    def familiarity(self, situation: SituationEmbedding) -> float:
+        """How well this player KNOWS the current situation (0-1):
+        the best similarity x strength over everything in the bank -
+        role schooling and lived experience alike.
+
+        This is pre-exposure made queryable: learned memories raise
+        familiarity in the situations they were formed in, so a veteran
+        of fifty big nights literally recognizes the moment. Familiar
+        situations impose less cognitive load and give System 1
+        something real to offer; novel ones do neither."""
+        if not self.instincts:
+            return 0.0
+        return max(similarity(situation, instinct.prototype) * instinct.strength
+                   for instinct in self.instincts)
+
     # -- learning (written by outcomes) ---------------------------------------
 
     def learn(self, situation: SituationEmbedding, action: str,
