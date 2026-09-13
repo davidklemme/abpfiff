@@ -162,17 +162,29 @@ class MatchEngine:
 
         return events
 
+    # A player covers at most ~3 units/tick under their own power; any
+    # larger step is a restart teleport (kickoff reset, throw-in spot,
+    # cross-match reuse of the engine) and must not become "motion".
+    MAX_PHYSICAL_STEP = 6.0
+
     def _update_velocities(self, state: MatchState):
         """Derive each player's smoothed velocity from their movement this
         tick. Orientation is state, not an attribute: perception reads the
-        facing straight from where the player is actually heading."""
+        facing straight from where the player is actually heading.
+
+        Teleports (restarts placing players, goal kickoffs resetting all
+        22, a reused engine starting a fresh match) are detected by step
+        size and reset the motion state instead of polluting the facing."""
         for player in state.home_team.players + state.away_team.players:
             last = self._last_positions.get(player.player_id)
             if last is not None:
                 dx = player.position.x - last[0]
                 dy = player.position.y - last[1]
-                player.velocity_x = 0.6 * player.velocity_x + 0.4 * dx
-                player.velocity_y = 0.6 * player.velocity_y + 0.4 * dy
+                if (dx * dx + dy * dy) ** 0.5 > self.MAX_PHYSICAL_STEP:
+                    player.velocity_x = player.velocity_y = 0.0
+                else:
+                    player.velocity_x = 0.6 * player.velocity_x + 0.4 * dx
+                    player.velocity_y = 0.6 * player.velocity_y + 0.4 * dy
             self._last_positions[player.player_id] = (player.position.x,
                                                       player.position.y)
 

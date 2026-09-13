@@ -36,6 +36,13 @@ TRAUMA_RATTLED_GAIN = 0.5
 # NOTE: mean-absolute similarity compresses toward 1 as embedding
 # dimensions grow - retune this when SituationEmbedding gains dimensions.
 MEMORY_MERGE_SIMILARITY = 0.8
+
+# Recognition ("I have LIVED this moment") is a sharper judgment than
+# response retrieval: familiarity uses a squared similarity kernel (so
+# the dimension-compressed mean-absolute metric regains discrimination)
+# and discounts generic role schooling - a textbook covers everything
+# loosely, lived memories cover their situations exactly.
+ROLE_SCHOOLING_FAMILIARITY = 0.6
 PROTOTYPE_BLEND = 0.2          # how far a merge moves the prototype
 MAX_LEARNED_MEMORIES = 12      # per bank; weakest dropped beyond this
 MIN_MEMORY_STRENGTH = 0.05     # decayed below this = forgotten
@@ -62,6 +69,18 @@ def _source_factor(source: str, confidence: float) -> float:
     return 1.0
 
 
+def aggression_tilted(weights: Dict[str, float],
+                      aggression: float) -> Dict[str, float]:
+    """The one place personality tilts an action-weight map bold/safe:
+    used for seeding banks AND for the untrained-instinct fallback."""
+    tilt = (aggression - 50) / 100.0  # -0.5 .. +0.5
+    return {
+        action: max(0.01, weight * (1.0 + tilt * 0.6 if action in BOLD_ACTIONS
+                                    else 1.0 - tilt * 0.6))
+        for action, weight in weights.items()
+    }
+
+
 def _blend_prototypes(old: SituationEmbedding,
                       new: SituationEmbedding) -> SituationEmbedding:
     keep = 1.0 - PROTOTYPE_BLEND
@@ -77,22 +96,36 @@ class InstinctBank:
 
     # -- retrieval (System 1) ------------------------------------------------
 
-    def query(self, situation: SituationEmbedding,
-              confidence: float = 0.0) -> Dict[str, float]:
-        """Similarity-weighted action preferences for this situation.
+    def recall(self, situation: SituationEmbedding,
+               confidence: float = 0.0):
+        """One pass over the bank: (action weights, familiarity).
 
-        Confidence acts twice: it selects between memory classes (success
-        anchors vs trauma) and tilts the final mix bold vs safe. Returns
-        weights normalized to sum 1 (uniform if the bank is empty).
+        The weights are similarity-weighted action preferences (System 1
+        content); familiarity is recognition - how well this player KNOWS
+        the situation. Both derive from the same prototype comparisons,
+        computed once (this runs on every on-ball decision).
+
+        Confidence acts twice on the weights: it selects between memory
+        classes (success anchors vs trauma) and tilts the mix bold/safe.
+        Familiarity uses a squared kernel and discounts role schooling:
+        pre-exposure - lived memories matching this moment - is what
+        makes a veteran of fifty big nights recognize the fifty-first.
         """
         weights = {action: 0.0 for action in ALL_ACTIONS}
+        familiarity = 0.0
 
         for instinct in self.instincts:
-            match = (similarity(situation, instinct.prototype)
-                     * instinct.strength
-                     * _source_factor(instinct.source, confidence))
+            sim = similarity(situation, instinct.prototype)
+
+            match = sim * instinct.strength * _source_factor(instinct.source,
+                                                             confidence)
             for action, weight in instinct.action_weights.items():
                 weights[action] = weights.get(action, 0.0) + match * weight
+
+            recognition = sim * sim * instinct.strength
+            if instinct.source == "role":
+                recognition *= ROLE_SCHOOLING_FAMILIARITY
+            familiarity = max(familiarity, recognition)
 
         # Confidence tilt
         for action in list(weights):
@@ -104,23 +137,22 @@ class InstinctBank:
 
         total = sum(weights.values())
         if total <= 0:
-            return {action: 1.0 / len(ALL_ACTIONS) for action in ALL_ACTIONS}
-        return {action: weight / total for action, weight in weights.items()}
+            weights = {action: 1.0 / len(ALL_ACTIONS) for action in ALL_ACTIONS}
+        else:
+            weights = {action: weight / total
+                       for action, weight in weights.items()}
+        return weights, min(1.0, familiarity)
+
+    def query(self, situation: SituationEmbedding,
+              confidence: float = 0.0) -> Dict[str, float]:
+        """Action preferences only (see recall)."""
+        weights, _ = self.recall(situation, confidence)
+        return weights
 
     def familiarity(self, situation: SituationEmbedding) -> float:
-        """How well this player KNOWS the current situation (0-1):
-        the best similarity x strength over everything in the bank -
-        role schooling and lived experience alike.
-
-        This is pre-exposure made queryable: learned memories raise
-        familiarity in the situations they were formed in, so a veteran
-        of fifty big nights literally recognizes the moment. Familiar
-        situations impose less cognitive load and give System 1
-        something real to offer; novel ones do neither."""
-        if not self.instincts:
-            return 0.0
-        return max(similarity(situation, instinct.prototype) * instinct.strength
-                   for instinct in self.instincts)
+        """Recognition only (see recall)."""
+        _, familiarity = self.recall(situation)
+        return familiarity
 
     # -- learning (written by outcomes) ---------------------------------------
 
@@ -235,18 +267,9 @@ def default_bank_for(player: Player) -> InstinctBank:
     """Seed a bank from the player's role, shaped by aggression:
     aggressive players' comfort actions skew bold, timid ones' skew safe."""
     group = _ROLE_GROUP.get(player.role.lower(), "defender")
-    aggression_tilt = (player.aggression - 50) / 100.0  # -0.5 .. +0.5
-
-    instincts = []
-    for seed in ROLE_SEEDS[group]:
-        weights = {}
-        for action, weight in seed.action_weights.items():
-            if action in BOLD_ACTIONS:
-                weight *= 1.0 + aggression_tilt * 0.6
-            else:
-                weight *= 1.0 - aggression_tilt * 0.6
-            weights[action] = max(0.01, weight)
-        instincts.append(Instinct(seed.name, seed.prototype, weights,
-                                  strength=seed.strength, source="role"))
-
-    return InstinctBank(instincts)
+    return InstinctBank([
+        Instinct(seed.name, seed.prototype,
+                 aggression_tilted(seed.action_weights, player.aggression),
+                 strength=seed.strength, source="role")
+        for seed in ROLE_SEEDS[group]
+    ])

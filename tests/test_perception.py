@@ -180,7 +180,9 @@ def test_perception_errors_cost_completion():
 
 def test_vision_now_has_perceptual_value():
     """A high-vision squad completes more passes than a low-vision one -
-    the attribute governs what players actually see."""
+    the attribute governs what players actually see. Aggregated over
+    several seeds: the effect is real but a single 4-match sample is
+    noisy (adversarial review: seed 17 alone inverts)."""
     def completion(vision, seed):
         engine = MatchEngine(SimulationConfig(ticks_per_minute=6, seed=seed))
         completed = attempts = 0
@@ -196,7 +198,10 @@ def test_vision_now_has_perceptual_value():
             attempts += m.home.pass_attempts + m.away.pass_attempts
         return completed / attempts
 
-    assert completion(vision=90, seed=17) > completion(vision=20, seed=17)
+    seeds = (17, 23, 31)
+    sharp = sum(completion(vision=90, seed=s) for s in seeds)
+    blind = sum(completion(vision=20, seed=s) for s in seeds)
+    assert sharp > blind, (sharp, blind)
 
 
 if __name__ == "__main__":

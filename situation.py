@@ -5,9 +5,11 @@ Phase 2 slice).
 
 Every dimension is 0-1 and derived purely from signals the engine already
 computes - pressure, frame-aware field position, match clock/score,
-opponent density, passing support - so the embedding is a pure function
-of match state and can be tested in isolation. (The doc's
-body_orientation dimension is deferred: the engine doesn't model facing.)
+opponent density, passing support, width - so the embedding is a pure
+function of match state and can be tested in isolation. (The engine now
+derives facing from motion - engine._update_velocities - so the doc's
+body_orientation dimension is unlocked; adding it means retuning the
+similarity-based thresholds, see instincts.MEMORY_MERGE_SIMILARITY.)
 """
 from dataclasses import dataclass
 from typing import List, Optional, Tuple

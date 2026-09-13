@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Protocol, Tuple
 
 from models import MatchState, Player, Team
 from situation import SituationEmbedding
-from instincts import ALL_ACTIONS, BOLD_ACTIONS, SAFE_ACTIONS
+from instincts import ALL_ACTIONS, SAFE_ACTIONS, aggression_tilted
 from minds import MindRegistry
 import psychology
 
@@ -45,13 +45,7 @@ SAFE_FALLBACK = {
 
 
 def _fallback_for(player: Player) -> dict:
-    aggression_tilt = (player.aggression - 50) / 100.0  # -0.5 .. +0.5
-    tilted = {
-        action: weight * (1.0 + aggression_tilt * 0.6
-                          if action in BOLD_ACTIONS
-                          else 1.0 - aggression_tilt * 0.6)
-        for action, weight in SAFE_FALLBACK.items()
-    }
+    tilted = aggression_tilted(SAFE_FALLBACK, player.aggression)
     total = sum(tilted.values())
     return {action: weight / total for action, weight in tilted.items()}
 
@@ -177,11 +171,15 @@ class DualProcessDecisionModel:
         holder = context.holder
         mind = self.minds.mind_for(holder)
 
+        # One pass over the bank yields both what System 1 has to say and
+        # how well the player RECOGNIZES this situation (pre-exposure).
+        instinct_raw, familiarity = mind.bank.recall(
+            context.situation, confidence=holder.confidence)
+
         # Cognitive load: match pressure (which already carries the
         # environment through sensitivity) plus the cost of novelty.
-        # Pre-exposure - a bank that recognizes this situation - is load
-        # relief; the same lights weigh less the fiftieth time.
-        familiarity = mind.bank.familiarity(context.situation)
+        # Pre-exposure is load relief; the same lights weigh less the
+        # fiftieth time.
         load = min(1.0, context.situation.pressure
                    + NOVELTY_LOAD * (1.0 - familiarity))
 
@@ -194,8 +192,6 @@ class DualProcessDecisionModel:
         # territory the instinct flattens toward the safe default -
         # high load with no familiar patterns is the debutant freeze,
         # not sudden boldness.
-        instinct_raw = mind.bank.query(context.situation,
-                                       confidence=holder.confidence)
         fallback = _fallback_for(holder)
         instinct = {
             action: familiarity * instinct_raw.get(action, 0.0)

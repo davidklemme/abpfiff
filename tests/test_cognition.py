@@ -196,6 +196,66 @@ def test_poor_visibility_narrows_focus_more_for_the_sensitive():
     assert clear_gap > calm_gap  # murk costs the sensitive more
 
 
+def test_restart_teleports_do_not_become_motion():
+    """Regression (adversarial review): a kickoff reset teleports players
+    tens of units; that step must reset motion state, not register as a
+    14-units/tick sprint that corrupts facing for the next ~8 ticks."""
+    engine = MatchEngine(SimulationConfig(ticks_per_minute=6, seed=2))
+    player = make_player("P", x=10.0, y=10.0)
+    state = make_match([player], [make_player("Opp", x=90, y=90)])
+
+    engine._update_velocities(state)      # baseline recorded
+    player.position = Position(80.0, 80.0)  # restart teleport
+    engine._update_velocities(state)
+
+    assert player.velocity_x == 0.0 and player.velocity_y == 0.0
+
+    player.position = Position(82.0, 80.0)  # normal running step
+    engine._update_velocities(state)
+    assert abs(player.velocity_x) > 0.0
+
+
+def test_reused_engine_does_not_carry_ghost_velocity_across_matches():
+    """Regression (adversarial review): one engine, two matches, same
+    player identities - match 2 must not open with match 1's final
+    positions producing a cross-match teleport velocity."""
+    from teams import create_tactical_matchup
+    engine = MatchEngine(SimulationConfig(ticks_per_minute=6, seed=4))
+
+    home, away = create_tactical_matchup("balanced", "balanced")
+    engine.simulate_match(MatchState(home_team=home, away_team=away,
+                                     ball=Ball()), minutes=10)
+
+    home2, away2 = create_tactical_matchup("balanced", "balanced")
+    state2 = MatchState(home_team=home2, away_team=away2, ball=Ball())
+    top_speed = 0.0
+
+    def watch(s):
+        nonlocal top_speed
+        for p in s.home_team.players + s.away_team.players:
+            speed = (p.velocity_x ** 2 + p.velocity_y ** 2) ** 0.5
+            top_speed = max(top_speed, speed)
+
+    engine.on_tick(watch)
+    engine.simulate_match(state2, minutes=2)
+    assert top_speed < 4.0, f"ghost velocity {top_speed:.1f} units/tick"
+
+
+def test_role_schooling_no_longer_saturates_familiarity():
+    """Regression (adversarial review): generic role seeds must not make
+    every situation feel known (~0.9), or novelty is inert. Lived
+    memories, in contrast, produce real recognition where they match."""
+    from instincts import default_bank_for
+    schooled = default_bank_for(make_player("Rookie", role="cm"))
+    typical = SituationEmbedding(0.4, 0.55, 0.5, 0.45, 0.5)
+    assert schooled.familiarity(typical) < 0.65
+
+    veteran_bank = default_bank_for(make_player("Vet", role="cm"))
+    for _ in range(4):
+        veteran_bank.learn(typical, "pass_forward", valence=1.0, significance=0.8)
+    assert veteran_bank.familiarity(typical) > schooled.familiarity(typical) + 0.2
+
+
 def test_facing_is_derived_from_motion():
     engine = MatchEngine(SimulationConfig(ticks_per_minute=6, seed=3))
     from teams import create_tactical_matchup
