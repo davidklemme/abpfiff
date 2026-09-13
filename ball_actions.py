@@ -15,6 +15,7 @@ from models import (
 )
 from spatial import SpaceControl
 from restarts import SimpleRestartPolicy, is_out_of_bounds
+from execution import execution_quality, contest
 import psychology
 
 
@@ -24,9 +25,9 @@ LATERAL_PRESSURE_MULTIPLIER = {True: 1.0, False: 0.6}
 BACKWARD_PRESSURE_MULTIPLIER = {True: 0.8, False: 0.2}
 
 # Chance a won tackle deflects the ball over the nearest touchline
-TACKLE_DEFLECTION_CHANCE = 0.2
+TACKLE_DEFLECTION_CHANCE = 0.3
 # Chance a save is parried behind for a corner instead of held
-SAVE_PARRY_CHANCE = 0.25
+SAVE_PARRY_CHANCE = 0.3
 
 
 class DefaultActionResolver:
@@ -242,20 +243,25 @@ class DefaultActionResolver:
             dist_to_ball = defender.position.distance_to(ball.position)
 
             if dist_to_ball < 8:  # Within interception range
-                # Interception chance based on positioning and anticipation
-                base_chance = 0.15
+                # Interception from the defender's factor stack (positioning
+                # skill, fatigue, pressure, confidence) plus pace to close.
+                # NOTE: this check re-rolls every tick of flight for every
+                # defender in range, so the per-roll chance must stay small.
+                attacking_team = (state.home_team
+                                  if defending_team is state.away_team
+                                  else state.away_team)
+                exec_q = execution_quality(defender, 'positioning', state,
+                                           attacking_team,
+                                           momentum=defending_team.momentum)
+                base_chance = 0.01 + exec_q * 0.05
 
                 # Ground passes easier to intercept than air
                 if ball.state == BallState.GROUND_PASS:
-                    base_chance += 0.1
-
-                # Good positioning = better interception
-                positioning = defender.effective_attribute('positioning')
-                base_chance += (positioning - 50) / 200
+                    base_chance += 0.015
 
                 # Fast players close gap better
                 pace = defender.effective_attribute('pace')
-                base_chance += (pace - 50) / 300
+                base_chance += (pace - 50) / 400
 
                 if self.rng.random() < base_chance:
                     ball.give_to(defender)
@@ -283,13 +289,19 @@ class DefaultActionResolver:
             ball.make_loose()
             return None
 
-        # Check if target controlled the ball
-        first_touch = target.effective_attribute('first_touch')
-        control_chance = 0.7 + (first_touch / 100) * 0.25
+        # First touch from the receiver's full factor stack: a tired,
+        # rattled or pressured receiver miscontrols far more often
+        if target in state.home_team.players:
+            own_team, opp_team = state.home_team, state.away_team
+        else:
+            own_team, opp_team = state.away_team, state.home_team
+        exec_q = execution_quality(target, 'first_touch', state, opp_team,
+                                   momentum=own_team.momentum)
+        control_chance = 0.78 + exec_q * 0.22
 
         # Air balls harder to control
         if ball.state == BallState.AIR_PASS:
-            control_chance -= 0.15
+            control_chance -= 0.08
 
         if self.rng.random() < control_chance:
             ball.give_to(target)
@@ -335,13 +347,16 @@ class DefaultActionResolver:
         goalkeeper = state.defending_team.goalkeeper
 
         if goalkeeper:
-            # Goalkeeper save attempt
+            # Goalkeeper save attempt: the keeper's own factor stack
+            # (positioning skill, fatigue, pressure, confidence) vs. geometry
             gk_dist = goalkeeper.position.distance_to(goal_pos)
-            gk_positioning = goalkeeper.effective_attribute('positioning')
+            gk_exec = execution_quality(goalkeeper, 'positioning', state,
+                                        state.attacking_team,
+                                        momentum=state.defending_team.momentum)
             gk_reactions = goalkeeper.effective_attribute('pace')  # Use pace for reactions
 
-            # Save chance based on positioning and distance
-            save_chance = 0.3 + (gk_positioning / 100) * 0.4
+            # Save chance based on execution quality and distance
+            save_chance = 0.25 + gk_exec * 0.45
             if gk_dist < 10:
                 save_chance += 0.2
             save_chance += (gk_reactions / 100) * 0.1
@@ -503,10 +518,13 @@ class DefaultActionResolver:
                 target = t
                 break
 
-        # Calculate pass success
-        base_success = (passer.effective_attribute('passing') / 100) * 0.7
+        # Pass success from the full factor stack (skill, fatigue, pressure,
+        # confidence, team momentum) plus the geometry of the chosen lane.
+        # Interceptions and first-touch checks price further risk downstream.
+        exec_q = execution_quality(passer, 'passing', state, defending_team,
+                                   momentum=attacking_team.momentum)
         lane_quality = next((q for t, q in lanes if t == target), 0.5)
-        success_prob = base_success + lane_quality * 0.3
+        success_prob = 0.62 + exec_q * 0.40 + lane_quality * 0.08
 
         # Add randomness
         success_prob += (self.rng.random() - 0.5) * self.randomness
@@ -553,13 +571,18 @@ class DefaultActionResolver:
                 description=f"{dribbler.name} carries the ball forward"
             )
 
-        # Contested dribble
+        # Contested dribble: a duel of two full factor stacks - skill,
+        # fatigue, pressure, confidence and momentum on BOTH sides
         nearest_def = min(defenders, key=lambda p: p.position.distance_to(dribbler.position))
 
-        dribble_skill = dribbler.effective_attribute('dribbling')
-        defend_skill = nearest_def.effective_attribute('defending')
+        q_attacker = execution_quality(dribbler, 'dribbling', state,
+                                       defending_team,
+                                       momentum=attacking_team.momentum)
+        q_defender = execution_quality(nearest_def, 'defending', state,
+                                       attacking_team,
+                                       momentum=defending_team.momentum)
 
-        success_prob = (dribble_skill / (dribble_skill + defend_skill))
+        success_prob = contest(q_attacker, q_defender)
         success_prob += (self.rng.random() - 0.5) * self.randomness
 
         if self.rng.random() < success_prob:
@@ -641,8 +664,10 @@ class DefaultActionResolver:
         goal = attacking_team.attacking_goal
         distance = shooter.position.distance_to(goal)
 
-        # Base shot quality (determines if on target)
-        shooting = shooter.effective_attribute('shooting')
+        # Shot quality from the shooter's full factor stack (shooting skill,
+        # fatigue, pressure, confidence, momentum) shaped by the geometry
+        exec_q = execution_quality(shooter, 'shooting', state, defending_team,
+                                   momentum=attacking_team.momentum)
         composure = shooter.effective_attribute('composure')
 
         # Distance penalty
@@ -651,7 +676,7 @@ class DefaultActionResolver:
         # Angle factor (shots from center are easier)
         angle_factor = 1 - abs(shooter.position.x - 50) / 100
 
-        shot_quality = (shooting / 100) * distance_factor * angle_factor * 0.7
+        shot_quality = exec_q * distance_factor * angle_factor * 0.7
         shot_quality += (composure / 100) * 0.3
         shot_quality += (self.rng.random() - 0.5) * self.randomness
 

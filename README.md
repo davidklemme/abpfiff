@@ -49,7 +49,15 @@ No framework needed - plain asserts:
 python3 tests/test_psychology.py   # Phase 1 psychological engine
 python3 tests/test_direction.py    # Attack-direction / symmetry correctness
 python3 tests/test_restarts.py     # Out-of-play restarts + kickoffs + determinism
+python3 tests/test_execution.py    # Factor-driven execution quality model
+python3 tests/test_metrics.py      # Metrics collector + validation machinery
+python3 validate.py --matches 20 --seed 42 --gate   # Statistical regression gate
 ```
+
+CI (`.github/workflows/ci.yml`) runs all suites plus the validation gate.
+`validate.py` reports each metric against a **gate band** (regression guard,
+fails CI) and a **target band** (real-football realism goal, warns only) -
+tighten gates toward targets as calibration and the ball model improve.
 
 See `docs/reviews/` for engine reviews and the current roadmap.
 
@@ -66,10 +74,13 @@ anstoss-engine/
 ├── tactics.py      # Tactical principles system
 ├── movement.py     # RoleMovementModel: off-ball player movement
 ├── ball_actions.py # DefaultActionResolver: pass/shot/dribble/duel resolution
+├── execution.py    # Execution quality: skill x fatigue x pressure x confidence x momentum
 ├── restarts.py     # SimpleRestartPolicy: kickoffs, throw-ins, goal kicks, corners
 ├── conditioning.py # Fatigue and momentum models
 ├── psychology.py   # Phase 1 psychological engine (pressure, confidence)
 ├── engine.py       # MatchEngine: thin orchestrator + tick/minute/match loops
+├── metrics.py      # MatchMetrics: passive per-match statistics collector
+├── validate.py     # Statistical validation harness (CI gate + realism targets)
 ├── teams.py        # Team/player creation utilities
 ├── visualizer.py   # ASCII rendering
 └── demo.py         # Demo script
@@ -117,7 +128,7 @@ my_tactics = TacticalSetup(
 ## TODO / Future Ideas
 
 - [x] Rules-of-the-game minimum: throw-ins, corners, goal kicks as possession restarts
-- [ ] Statistical validation harness (goals/shots/possession vs. real-football bands)
+- [x] Statistical validation harness (goals/shots/possession vs. real-football bands)
 - [ ] Lead passes / receiver movement (ball model currently locks target at kick time)
 - [ ] Set pieces (corners, free kicks)
 - [ ] Substitutions and fatigue management

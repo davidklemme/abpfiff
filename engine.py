@@ -72,12 +72,18 @@ class MatchEngine:
         ]
 
         self.event_handlers: List[Callable] = []
+        self.tick_handlers: List[Callable] = []
 
     # -- events -------------------------------------------------------------
 
     def on_event(self, handler: Callable):
         """Register event handler"""
         self.event_handlers.append(handler)
+
+    def on_tick(self, handler: Callable):
+        """Register a per-tick observer, called with the MatchState after
+        every simulated tick (used by metrics/validation harnesses)."""
+        self.tick_handlers.append(handler)
 
     def _emit_event(self, event: MatchEvent):
         """Emit event to all handlers"""
@@ -132,6 +138,10 @@ class MatchEngine:
 
         # 4. Confidence drifts back toward neutral over time
         psychology.decay_all(state, minutes_elapsed=1.0 / self.config.ticks_per_minute)
+
+        # 5. Notify per-tick observers
+        for handler in self.tick_handlers:
+            handler(state)
 
         return events
 
