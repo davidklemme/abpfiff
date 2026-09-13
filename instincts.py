@@ -33,9 +33,18 @@ TRAUMA_RATTLED_GAIN = 0.5
 
 # Learning shape: new memories merge into a sufficiently similar existing
 # memory of the same action and kind instead of piling up duplicates.
-# NOTE: mean-absolute similarity compresses toward 1 as embedding
-# dimensions grow - retune this when SituationEmbedding gains dimensions.
+# 0.8 = a total distance budget of 1.2 across the embedding
+# (situation.SIMILARITY_SCALE is fixed, so this threshold no longer
+# needs retuning when SituationEmbedding gains dimensions).
 MEMORY_MERGE_SIMILARITY = 0.8
+
+# Role schooling is acquired on the training pitch - quieter than any
+# real match - so its prototypes sit at near-zero occasion-load.
+# Big-night situations are therefore DISSIMILAR to pure schooling in the
+# load dimension: the debutant effect emerges from geometry, and only
+# lived high-load memories close the gap. Keep this near zero: it is a
+# flat familiarity tax on every ordinary-environment situation.
+SCHOOLING_LOAD = 0.05
 
 # Recognition ("I have LIVED this moment") is a sharper judgment than
 # response retrieval: familiarity uses a squared similarity kernel (so
@@ -215,9 +224,10 @@ class InstinctBank:
 # ---------------------------------------------------------------------------
 
 def _proto(pressure=0.5, progression=0.5, time_criticality=0.5,
-           spatial_density=0.5, support=0.5, width=0.5) -> SituationEmbedding:
+           spatial_density=0.5, support=0.5, width=0.5,
+           load=SCHOOLING_LOAD) -> SituationEmbedding:
     return SituationEmbedding(pressure, progression, time_criticality,
-                              spatial_density, support, width)
+                              spatial_density, support, width, load)
 
 
 # Per role-group: (situation prototype, action weights) comfort patterns.

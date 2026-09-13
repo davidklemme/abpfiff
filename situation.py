@@ -5,11 +5,12 @@ Phase 2 slice).
 
 Every dimension is 0-1 and derived purely from signals the engine already
 computes - pressure, frame-aware field position, match clock/score,
-opponent density, passing support, width - so the embedding is a pure
-function of match state and can be tested in isolation. (The engine now
-derives facing from motion - engine._update_velocities - so the doc's
-body_orientation dimension is unlocked; adding it means retuning the
-similarity-based thresholds, see instincts.MEMORY_MERGE_SIMILARITY.)
+opponent density, passing support, width, occasion load - so the
+embedding is a pure function of match state and can be tested in
+isolation. (The engine now derives facing from motion -
+engine._update_velocities - so the doc's body_orientation dimension is
+unlocked; the fixed-scale similarity kernel below makes adding it cheap,
+no threshold retune needed.)
 """
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -26,10 +27,18 @@ class SituationEmbedding:
     spatial_density: float   # 0-1: opponents crowding the ball
     support: float           # 0-1: passing options available
     width: float = 0.5       # 0-1: how wide the holder is (0=center, 1=touchline)
+    # 0-1: the occasion's mental load AS EXPERIENCED (environment through
+    # the player's sensitivity). A dimension, not a side-channel: memories
+    # carry the load they were formed under, so recognition is
+    # state-dependent - the veteran's big-night anchors sit at high-load
+    # coordinates and match the next big night by similarity alone, while
+    # a quiet league game leaves them dormant (trauma resurfacing works
+    # the same way, doc section 3.7).
+    load: float = 0.0
 
     def as_tuple(self) -> Tuple[float, ...]:
         return (self.pressure, self.progression, self.time_criticality,
-                self.spatial_density, self.support, self.width)
+                self.spatial_density, self.support, self.width, self.load)
 
 
 def situation_for(holder: Player, attacking_team: Team, defending_team: Team,
@@ -64,14 +73,27 @@ def situation_for(holder: Player, attacking_team: Team, defending_team: Team,
         spatial_density=spatial_density,
         support=support,
         width=min(1.0, abs(holder.position.x - 50.0) / 50.0),
+        load=state.environment.psychological_load(holder.sensitivity),
     )
+
+
+# Distance budget the similarity kernel measures against. FIXED, not the
+# dimension count: dividing by len(dims) would compress every existing
+# contrast each time the embedding grows (agreement on a new axis is not
+# evidence of sameness - it just dilutes the axes that DO differ).
+# Against a fixed scale, a new dimension costs similarity only where two
+# situations actually differ on it, so prototype discrimination and the
+# thresholds built on it (instincts.MEMORY_MERGE_SIMILARITY, familiarity
+# levels) stay stable as dimensions are added.
+SIMILARITY_SCALE = 6.0
 
 
 def similarity(a: SituationEmbedding, b: SituationEmbedding) -> float:
     """0-1 similarity between two situations (1 = identical).
 
-    Mean absolute difference over the dimensions, inverted - cheap,
-    monotonic, and adequate for prototype matching in Phase 2."""
+    Total absolute difference over the dimensions against a fixed
+    distance budget, inverted and floored at 0 - cheap, monotonic, and
+    adequate for prototype matching in Phase 2."""
     ta, tb = a.as_tuple(), b.as_tuple()
-    distance = sum(abs(x - y) for x, y in zip(ta, tb)) / len(ta)
-    return 1.0 - distance
+    distance = sum(abs(x - y) for x, y in zip(ta, tb)) / SIMILARITY_SCALE
+    return max(0.0, 1.0 - distance)

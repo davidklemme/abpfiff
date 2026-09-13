@@ -86,11 +86,14 @@ def test_sensitive_players_play_safer_on_big_nights():
     sensitive player retreats to the safe ball more when the stage grows.
     (Composure high enough that load shifts the blend without crossing
     into overload - past absorption, even the safe habit scrambles, see
-    test_overload_blurs_even_trained_instinct.)"""
+    test_overload_blurs_even_trained_instinct.)
+
+    Paired comparison: each condition gets an identically-seeded model,
+    so the only difference between the samples is the environment."""
     nervous = make_player("Nervous", role="cm", sensitivity=95, composure=75)
-    model = DualProcessDecisionModel(rng=random.Random(5))
 
     def shares(env):
+        model = DualProcessDecisionModel(rng=random.Random(5))
         state = make_match([nervous], [make_player("Opp", x=10, y=10)])
         state.environment = env
         return action_shares(model, lambda: make_context(nervous, state))
@@ -174,6 +177,84 @@ def test_overload_blurs_even_trained_instinct():
         return shares.get("shoot", 0)
 
     assert shoot_share(composure=90, seed=13) > shoot_share(composure=15, seed=13)
+
+
+# ---------------------------------------------------------------------------
+# The load DIMENSION: state-dependent memory (occasion is geometry)
+# ---------------------------------------------------------------------------
+
+def _play(load):
+    """The same passage of play at different occasion intensities."""
+    return SituationEmbedding(0.5, 0.6, 0.5, 0.5, 0.5, 0.5, load)
+
+
+def test_situation_embedding_carries_subjective_load():
+    thin_skinned = make_player("Thin", sensitivity=90)
+    thick_skinned = make_player("Thick", sensitivity=10)
+    state = make_match([thin_skinned, thick_skinned],
+                       [make_player("Opp", x=10, y=10)])
+    state.environment = BIG_NIGHT
+
+    from situation import situation_for
+    loaded = situation_for(thin_skinned, state.home_team, state.away_team, state)
+    calm = situation_for(thick_skinned, state.home_team, state.away_team, state)
+
+    assert loaded.load > calm.load > 0.0
+    state.environment = Environment()
+    neutral = situation_for(thin_skinned, state.home_team, state.away_team, state)
+    assert neutral.load == 0.0
+
+
+def test_memories_are_recognized_at_the_load_they_were_formed_under():
+    """State-dependent memory: a big-night anchor matches the next big
+    night; the identical play learned on a quiet afternoon matches less."""
+    big_night_bank = InstinctBank([])
+    big_night_bank.learn(_play(load=0.9), "shoot", valence=1.0, significance=0.8)
+
+    quiet_bank = InstinctBank([])
+    quiet_bank.learn(_play(load=0.0), "shoot", valence=1.0, significance=0.8)
+
+    tonight = _play(load=0.9)
+    assert big_night_bank.familiarity(tonight) > quiet_bank.familiarity(tonight)
+
+
+def test_schooling_alone_fades_on_the_big_night():
+    """Debutant effect from geometry: role prototypes sit at ordinary-
+    conditions load, so the big occasion is dissimilar to everything a
+    merely-schooled player knows."""
+    from instincts import default_bank_for
+    schooled = default_bank_for(make_player("Debutant", role="cm"))
+    assert schooled.familiarity(_play(load=0.0)) > schooled.familiarity(_play(load=0.9))
+
+
+def test_big_night_experience_closes_the_gap_schooling_cannot():
+    from instincts import default_bank_for
+    veteran = default_bank_for(make_player("Veteran", role="cm"))
+    debutant = default_bank_for(make_player("Debutant", role="cm"))
+    for _ in range(4):
+        veteran.learn(_play(load=0.9), "pass_forward", valence=1.0,
+                      significance=0.8)
+
+    tonight = _play(load=0.9)
+    assert veteran.familiarity(tonight) > debutant.familiarity(tonight) + 0.2
+
+
+def test_trauma_resurfaces_on_similar_occasions_and_lies_dormant_otherwise():
+    """Doc section 3.7: trauma lives in similar CONTEXTS, not in time.
+    The cup-final miss suppresses shooting on the next cup final; a
+    quiet league game barely wakes it."""
+    bank = InstinctBank([])
+    # Comparison mass so query has positive weight at both loads
+    bank.learn(_play(load=0.9), "pass_safe", valence=0.6, significance=0.5)
+    bank.learn(_play(load=0.0), "pass_safe", valence=0.6, significance=0.5)
+    bank.learn(_play(load=0.0), "shoot", valence=0.6, significance=0.5)
+    bank.learn(_play(load=0.9), "shoot", valence=0.6, significance=0.5)
+    # The cup-final miss
+    bank.learn(_play(load=0.9), "shoot", valence=-1.0, significance=0.95)
+
+    cup_final = bank.query(_play(load=0.9))
+    league_game = bank.query(_play(load=0.0))
+    assert cup_final["shoot"] < league_game["shoot"]
 
 
 # ---------------------------------------------------------------------------
