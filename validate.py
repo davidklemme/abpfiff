@@ -120,6 +120,55 @@ BANDS: List[Band] = [
 ]
 
 
+def behavioral_separation(seed: int = 42, trials: int = 400) -> float:
+    """Archetype divergence: how much bolder the low-composure/high-
+    aggression 'chaos engine' plays than the composed metronome in an
+    identical situation. Returns the bold-action share ratio (>1 means
+    personalities measurably separate); deterministic for a given seed."""
+    import random as random_module
+    from models import Ball, Player, Position, Team
+    from situation import SituationEmbedding
+    from decisions import DecisionContext, DualProcessDecisionModel
+    from instincts import BOLD_ACTIONS
+
+    def make_player(name, composure, aggression):
+        player = Player(name=name, number=1, role="cm",
+                        composure=composure, aggression=aggression)
+        player.position = Position(50, 70)
+        player.base_position = Position(50, 70)
+        return player
+
+    def context_for(player):
+        home = Team(name="H", players=[player])
+        teammate = Player(name="T", number=2, role="cm")
+        away = Team(name="A", players=[Player(name="D", number=3, role="cm")])
+        state = MatchState(home_team=home, away_team=away, ball=Ball())
+        return DecisionContext(
+            holder=player, attacking_team=home, defending_team=away,
+            state=state,
+            situation=SituationEmbedding(0.55, 0.6, 0.5, 0.4, 0.5),
+            in_shooting_range=True, space_ahead=15.0,
+            nearest_defender_dist=10.0, lanes=[(teammate, 0.35)],
+            best_forward_lane=0.35, best_safe_lane=0.35,
+        )
+
+    model = DualProcessDecisionModel(rng=random_module.Random(seed))
+
+    def bold_share(player):
+        bold = sum(1 for _ in range(trials)
+                   if model.decide(context_for(player)) in BOLD_ACTIONS)
+        return bold / trials
+
+    chaos = bold_share(make_player("Chaos", composure=35, aggression=90))
+    metronome = bold_share(make_player("Metronome", composure=90, aggression=25))
+    return chaos / metronome if metronome > 0 else float("inf")
+
+
+# Archetypes must separate at least this much for the gate to pass
+SEPARATION_GATE = 1.15
+SEPARATION_TARGET = 1.30
+
+
 def run_validation(matches: int = 20, seed: int = 42, ticks_per_minute: int = 6,
                    home_style: str = "balanced",
                    away_style: str = "balanced") -> Aggregate:
@@ -197,6 +246,19 @@ def main() -> int:
                                args.home, args.away)
     gate_failures, target_warnings, rows = evaluate(aggregate)
     print_report(aggregate, rows)
+
+    # Behavioral separation: personalities must measurably diverge
+    separation = behavioral_separation(seed=args.seed)
+    sep_status = ("ok" if separation >= SEPARATION_TARGET
+                  else "off target" if separation >= SEPARATION_GATE
+                  else "GATE FAIL")
+    print(f"{'Archetype bold-action ratio (chaos/metronome)':<44}"
+          f"{separation:>8.2f}   {f'>={SEPARATION_GATE:g}':<14}"
+          f"{f'>={SEPARATION_TARGET:g}':<14}{sep_status}")
+    if sep_status == "GATE FAIL":
+        gate_failures.append("Behavioral separation")
+    elif sep_status == "off target":
+        target_warnings.append("Behavioral separation")
 
     if target_warnings:
         print(f"off target ({len(target_warnings)}): "

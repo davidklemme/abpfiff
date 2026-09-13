@@ -163,7 +163,9 @@ def test_matches_produce_all_restart_types():
         ev.event_type, counts[ev.event_type] + 1)
         if ev.event_type in counts else None)
 
-    for _ in range(4):
+    # Corners average ~1/match, so a small sample can plausibly see none;
+    # 10 matches keeps the check deterministic-with-margin, not flaky.
+    for _ in range(10):
         home, away = create_tactical_matchup("balanced", "balanced")
         state = MatchState(home_team=home, away_team=away, ball=Ball())
         engine.simulate_match(state, minutes=90)
@@ -183,29 +185,7 @@ def test_restart_events_do_not_move_confidence():
     assert all(p.confidence == 0.0 for p in home.players + away.players)
 
 
-TESTS = [obj for name, obj in list(globals().items())
-         if name.startswith("test_") and callable(obj)]
-
-
-def main():
-    failures = []
-    for test in TESTS:
-        try:
-            test()
-            print(f"  PASS  {test.__name__}")
-        except AssertionError as e:
-            failures.append(test.__name__)
-            print(f"  FAIL  {test.__name__}: {e}")
-        except Exception as e:
-            failures.append(test.__name__)
-            print(f"  ERROR {test.__name__}: {e!r}")
-
-    print()
-    print(f"{len(TESTS) - len(failures)}/{len(TESTS)} passed")
-    if failures:
-        print("Failed:", ", ".join(failures))
-        sys.exit(1)
-
+from support import run_tests
 
 if __name__ == "__main__":
-    main()
+    run_tests(globals())

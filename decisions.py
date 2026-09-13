@@ -23,7 +23,8 @@ from typing import Dict, List, Optional, Protocol, Tuple
 
 from models import MatchState, Player, Team
 from situation import SituationEmbedding
-from instincts import InstinctBank, ALL_ACTIONS, default_bank_for
+from instincts import ALL_ACTIONS
+from minds import MindRegistry
 import psychology
 
 
@@ -50,20 +51,30 @@ class DecisionModel(Protocol):
         ...
 
 
+def tiered_bonus(value: float, tiers: Tuple[Tuple[float, float], ...]) -> float:
+    """First-match threshold table: tiers are (min_value, bonus) pairs in
+    descending order. Replaces stacked if/elif bonus chains."""
+    for threshold, bonus in tiers:
+        if value > threshold:
+            return bonus
+    return 0.0
+
+
+# Dribble utility inputs as threshold tables
+SPACE_AHEAD_TIERS = ((20.0, 0.20), (10.0, 0.10))
+DRIBBLE_SKILL_TIERS = ((75.0, 0.15), (60.0, 0.08))
+DEFENDER_DISTANCE_TIERS = ((15.0, 0.10),)
+
+
 class DualProcessDecisionModel:
     """System 1/2 blended action selection."""
 
-    def __init__(self, rng: Optional[random.Random] = None):
+    def __init__(self, rng: Optional[random.Random] = None,
+                 minds: Optional[MindRegistry] = None):
         self.rng = rng or random.Random()
-        self._banks: Dict[int, InstinctBank] = {}
-
-    def _bank_for(self, player: Player) -> InstinctBank:
-        key = id(player)
-        bank = self._banks.get(key)
-        if bank is None:
-            bank = default_bank_for(player)
-            self._banks[key] = bank
-        return bank
+        # Shared with the learning layer: decisions read the banks that
+        # outcomes write (learning.py)
+        self.minds = minds or MindRegistry()
 
     # -- System 2: deliberate utility scoring --------------------------------
 
@@ -93,18 +104,11 @@ class DualProcessDecisionModel:
             shoot += confidence * 0.30
 
         # DRIBBLE: space and skill make carrying attractive
-        dribble = 0.12
-        if ctx.space_ahead > 20:
-            dribble += 0.20
-        elif ctx.space_ahead > 10:
-            dribble += 0.10
-        if dribbling > 75:
-            dribble += 0.15
-        elif dribbling > 60:
-            dribble += 0.08
-        if ctx.nearest_defender_dist > 15:
-            dribble += 0.10
-        dribble += confidence * 0.08
+        dribble = (0.12
+                   + tiered_bonus(ctx.space_ahead, SPACE_AHEAD_TIERS)
+                   + tiered_bonus(dribbling, DRIBBLE_SKILL_TIERS)
+                   + tiered_bonus(ctx.nearest_defender_dist, DEFENDER_DISTANCE_TIERS)
+                   + confidence * 0.08)
 
         # PASS FORWARD: needs a forward option worth playing; vision governs
         # how well the player perceives it
@@ -131,13 +135,14 @@ class DualProcessDecisionModel:
 
     def decide(self, context: DecisionContext) -> str:
         holder = context.holder
+        mind = self.minds.mind_for(holder)
 
         # System weights: pressure vs effective composure
         sys1 = psychology.system1_weight(context.situation.pressure, holder)
 
         analysis = _normalize(self.utilities(context))
-        instinct = self._bank_for(holder).query(context.situation,
-                                                confidence=holder.confidence)
+        instinct = mind.bank.query(context.situation,
+                                   confidence=holder.confidence)
 
         blended = {
             action: (1.0 - sys1) * analysis.get(action, 0.0)
@@ -152,7 +157,12 @@ class DualProcessDecisionModel:
             blended["pass_forward"] = 0.0
             blended["pass_safe"] = 0.0
 
-        return _weighted_choice(blended, self.rng, fallback="dribble")
+        action = _weighted_choice(blended, self.rng, fallback="dribble")
+
+        # Record for the learning layer: the outcome event that follows
+        # will be paired with this decision (learning.py)
+        mind.remember_decision(context.situation, action)
+        return action
 
 
 def _normalize(weights: Dict[str, float]) -> Dict[str, float]:

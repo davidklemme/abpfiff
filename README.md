@@ -54,6 +54,7 @@ python3 tests/test_metrics.py      # Metrics collector + validation machinery
 python3 tests/test_ball_model.py   # Lead passes, receiver runs, no-teleport possession
 python3 tests/test_visualizer.py   # ASCII rendering + colors
 python3 tests/test_decisions.py    # Dual-process decisions + behavioral separation
+python3 tests/test_learning.py     # Experience learning: anchors, traumas, memory
 python3 validate.py --matches 20 --seed 42 --gate   # Statistical regression gate
 ```
 
@@ -79,8 +80,12 @@ anstoss-engine/
 ├── ball_actions.py # DefaultActionResolver: pass/shot/dribble/duel resolution
 ├── execution.py    # Execution quality: skill x fatigue x pressure x confidence x momentum
 ├── situation.py    # SituationEmbedding: compact description of the decision moment
-├── instincts.py    # InstinctBank: role-seeded System 1 comfort actions
+├── instincts.py    # InstinctBank: role-seeded + experience-written System 1 responses
 ├── decisions.py    # DecisionModel seam + dual-process (System 1/2) action selection
+├── minds.py        # PlayerMind/MindRegistry: shared substrate for decide + learn
+├── learning.py     # ExperienceLearning: outcomes -> success anchors / traumas
+├── passing.py      # PassResolver: lead passes, interception, arrival
+├── shooting.py     # ShotResolver: shots, saves, parries
 ├── restarts.py     # SimpleRestartPolicy: kickoffs, throw-ins, goal kicks, corners
 ├── conditioning.py # Fatigue and momentum models
 ├── psychology.py   # Phase 1 psychological engine (pressure, confidence)

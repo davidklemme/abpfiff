@@ -69,29 +69,7 @@ def test_compact_visualizer_renders_both_teams():
     assert "\033[" not in out
 
 
-TESTS = [obj for name, obj in list(globals().items())
-         if name.startswith("test_") and callable(obj)]
-
-
-def main():
-    failures = []
-    for test in TESTS:
-        try:
-            test()
-            print(f"  PASS  {test.__name__}")
-        except AssertionError as e:
-            failures.append(test.__name__)
-            print(f"  FAIL  {test.__name__}: {e}")
-        except Exception as e:
-            failures.append(test.__name__)
-            print(f"  ERROR {test.__name__}: {e!r}")
-
-    print()
-    print(f"{len(TESTS) - len(failures)}/{len(TESTS)} passed")
-    if failures:
-        print("Failed:", ", ".join(failures))
-        sys.exit(1)
-
+from support import run_tests
 
 if __name__ == "__main__":
-    main()
+    run_tests(globals())
