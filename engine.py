@@ -54,7 +54,8 @@ class MatchEngine:
                  movement: Optional[MovementModel] = None,
                  actions: Optional[ActionResolver] = None,
                  restart_policy: Optional[RestartPolicy] = None,
-                 conditioning: Optional[List[ConditioningModel]] = None):
+                 conditioning: Optional[List[ConditioningModel]] = None,
+                 minds: Optional[MindRegistry] = None):
         self.config = config or SimulationConfig()
         self.rng = random.Random(self.config.seed)
 
@@ -62,8 +63,10 @@ class MatchEngine:
         self.restarts = restart_policy or SimpleRestartPolicy(rng=self.rng)
         self.movement = movement or RoleMovementModel(
             space_control=self.space_control, rng=self.rng)
-        # Decisions read the same minds that outcomes write (learning)
-        self.minds = MindRegistry()
+        # Decisions read the same minds that outcomes write (learning).
+        # Injectable so a series runner can carry one registry across
+        # matches and engines (docs/specs/temporal-continuity.md).
+        self.minds = minds if minds is not None else MindRegistry()
         self.learning = ExperienceLearning(self.minds)
         self.actions = actions or DefaultActionResolver(
             space_control=self.space_control,

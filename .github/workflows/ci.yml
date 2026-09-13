@@ -29,6 +29,12 @@ jobs:
           python tests/test_discipline.py
           python tests/test_perception.py
           python tests/test_cognition.py
+          python tests/test_continuity.py
 
       - name: Statistical validation gate
         run: python validate.py --matches 20 --seed 42 --gate
+
+      - name: Series trajectory gate (temporal continuity)
+        run: |
+          python series.py --matches 10 --seed 42 --gate
+          python series.py --matches 10 --seed 99 --gate
