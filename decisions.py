@@ -42,6 +42,7 @@ class DecisionContext:
     lanes: List[Tuple[Player, float]]
     best_forward_lane: float   # quality of best forward option (0 if none)
     best_safe_lane: float      # quality of best lateral/backward option
+    box_targets: int = 0  # teammates in the box a cross could find
 
 
 class DecisionModel(Protocol):
@@ -122,11 +123,22 @@ class DualProcessDecisionModel:
         pass_safe = 0.22 + ctx.best_safe_lane * 0.5
         pass_safe += ctx.situation.pressure * 0.25
 
+        # CROSS: continuous in the situation vector - the wider and more
+        # advanced the holder, the more the delivery suggests itself;
+        # vision governs spotting the runs. Needs someone to aim at.
+        cross = 0.0
+        if ctx.box_targets > 0:
+            situation = ctx.situation
+            cross = (situation.width * situation.progression * 0.9
+                     + 0.06 * min(3, ctx.box_targets)) * vision_factor
+            cross += confidence * 0.05
+
         # Personality warp: aggression trades safety for boldness
         utilities = {
             "shoot": shoot * (1.0 + aggression_tilt * 0.5),
             "dribble": dribble * (1.0 + aggression_tilt * 0.4),
             "pass_forward": pass_forward * (1.0 + aggression_tilt * 0.3),
+            "cross": cross * (1.0 + aggression_tilt * 0.2),
             "pass_safe": pass_safe * (1.0 - aggression_tilt * 0.4),
         }
         return {a: max(0.0, u) for a, u in utilities.items()}
@@ -156,6 +168,8 @@ class DualProcessDecisionModel:
         if not context.lanes:
             blended["pass_forward"] = 0.0
             blended["pass_safe"] = 0.0
+        if context.box_targets == 0:
+            blended["cross"] = 0.0  # nobody to aim at
 
         action = _weighted_choice(blended, self.rng, fallback="dribble")
 

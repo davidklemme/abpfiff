@@ -89,10 +89,18 @@ def _atk_winger(c: RoleMoveContext) -> Tuple[float, float]:
 
 
 def _atk_striker(c: RoleMoveContext) -> Tuple[float, float]:
-    # Strikers stretch the defense but stay onside (simplified)
-    target_y = min(c.ball_y + 25, 95)
-    target_x = 50 + c.rng.uniform(-20, 20)
-    return target_x, min(target_y, c.get_def_line() + 5)
+    # Strikers stretch the defense but stay onside (simplified).
+    # When the ball is wide and advanced, they crash the box for the cross.
+    ball_wide_and_high = (c.ball_x < 30 or c.ball_x > 70) and c.ball_y > 55
+    if ball_wide_and_high:
+        target_y = min(c.ball_y + 20, 90)
+        target_x = 50 + c.rng.uniform(-12, 12)
+        onside_slack = 10.0
+    else:
+        target_y = min(c.ball_y + 25, 95)
+        target_x = 50 + c.rng.uniform(-20, 20)
+        onside_slack = 5.0
+    return target_x, min(target_y, c.get_def_line() + onside_slack)
 
 
 # -- Defending role behaviors ------------------------------------------------

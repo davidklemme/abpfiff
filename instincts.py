@@ -18,7 +18,7 @@ from typing import Dict, List
 from models import Player
 from situation import SituationEmbedding, similarity
 
-BOLD_ACTIONS = ("shoot", "dribble", "pass_forward")
+BOLD_ACTIONS = ("shoot", "dribble", "pass_forward", "cross")
 SAFE_ACTIONS = ("pass_safe",)
 ALL_ACTIONS = BOLD_ACTIONS + SAFE_ACTIONS
 
@@ -33,7 +33,9 @@ TRAUMA_RATTLED_GAIN = 0.5
 
 # Learning shape: new memories merge into a sufficiently similar existing
 # memory of the same action and kind instead of piling up duplicates.
-MEMORY_MERGE_SIMILARITY = 0.75
+# NOTE: mean-absolute similarity compresses toward 1 as embedding
+# dimensions grow - retune this when SituationEmbedding gains dimensions.
+MEMORY_MERGE_SIMILARITY = 0.8
 PROTOTYPE_BLEND = 0.2          # how far a merge moves the prototype
 MAX_LEARNED_MEMORIES = 12      # per bank; weakest dropped beyond this
 MIN_MEMORY_STRENGTH = 0.05     # decayed below this = forgotten
@@ -166,9 +168,9 @@ class InstinctBank:
 # ---------------------------------------------------------------------------
 
 def _proto(pressure=0.5, progression=0.5, time_criticality=0.5,
-           spatial_density=0.5, support=0.5) -> SituationEmbedding:
+           spatial_density=0.5, support=0.5, width=0.5) -> SituationEmbedding:
     return SituationEmbedding(pressure, progression, time_criticality,
-                              spatial_density, support)
+                              spatial_density, support, width)
 
 
 # Per role-group: (situation prototype, action weights) comfort patterns.
@@ -180,10 +182,15 @@ ROLE_SEEDS = {
                  {"shoot": 0.10, "dribble": 0.15, "pass_forward": 0.35, "pass_safe": 0.40}),
     ],
     "wide_creator": [  # lw, rw, lm, rm, am, cam
-        Instinct("take_on", _proto(progression=0.7, spatial_density=0.4),
-                 {"shoot": 0.15, "dribble": 0.45, "pass_forward": 0.25, "pass_safe": 0.15}),
+        Instinct("take_on", _proto(progression=0.7, spatial_density=0.4, width=0.7),
+                 {"shoot": 0.12, "dribble": 0.38, "pass_forward": 0.20,
+                  "cross": 0.18, "pass_safe": 0.12}),
+        Instinct("whip_it_in", _proto(progression=0.85, spatial_density=0.5, width=0.9),
+                 {"shoot": 0.08, "dribble": 0.12, "pass_forward": 0.12,
+                  "cross": 0.55, "pass_safe": 0.13}),
         Instinct("recycle_under_pressure", _proto(pressure=0.8, spatial_density=0.7),
-                 {"shoot": 0.05, "dribble": 0.20, "pass_forward": 0.25, "pass_safe": 0.50}),
+                 {"shoot": 0.05, "dribble": 0.18, "pass_forward": 0.20,
+                  "cross": 0.12, "pass_safe": 0.45}),
     ],
     "midfield_organizer": [  # cm, dm, cdm variants
         Instinct("progress_in_space", _proto(pressure=0.25, support=0.7),

@@ -16,7 +16,9 @@ from restarts import SimpleRestartPolicy
 from execution import execution_quality, contest
 from situation import situation_for
 from decisions import DecisionContext, DecisionModel, DualProcessDecisionModel
-from passing import PassResolver, CONTROL_RADIUS  # noqa: F401 (re-export)
+from passing import (  # noqa: F401 (CONTROL_RADIUS re-exported for tests)
+    PassResolver, CONTROL_RADIUS, box_targets
+)
 from shooting import ShotResolver
 
 # Chance a won tackle deflects the ball over the nearest touchline
@@ -28,6 +30,26 @@ LOOSE_BALL_CLAIM_RADIUS = 4.0
 # Decision -> resolution intent: pass decisions carry a bias into
 # pass-target scoring instead of branching per action downstream.
 PASS_BIAS_BY_ACTION = {"pass_forward": 0.5, "pass_safe": -0.5}
+
+# Defenders under heavy pressure near their own goal clear their lines
+HOLDER_CLEARANCE_FRAME_Y = 22.0
+HOLDER_CLEARANCE_CHANCE = 0.35
+
+# Discipline: a foul is aggressive INTENT x mistimed EXECUTION. Intent
+# comes from the aggression trait; mistiming is 1 - execution quality, the
+# same factor stack (skill, fatigue, pressure, confidence, momentum) that
+# resolves every other contested action - so tired, rattled, pressured
+# challengers foul more without any bespoke formula.
+FOUL_INTENT_BASE = 0.5
+FOUL_INTENT_AGGRESSION = 0.6
+
+# A defender close enough to the holder engages in a challenge: the duel
+# ends in a foul, a dispossession, or the holder riding it and playing on
+CHALLENGE_RADIUS = 4.0
+CHALLENGE_CHANCE = 0.5
+YELLOW_CARD_CHANCE = 0.22
+YELLOW_AGGRESSION_WEIGHT = 0.10
+STRAIGHT_RED_CHANCE = 0.02
 
 
 class DefaultActionResolver:
@@ -87,14 +109,33 @@ class DefaultActionResolver:
         # Ball position safety net
         ball.position = ball.position.clamp()
 
-        # Higher pressure = more likely to lose ball or rush action
-        num_pressers, pressure_value = self.space_control.pressing_effectiveness(
-            defending_team, ball.position
-        )
-        if pressure_value > 0.8 and self.rng.random() < 0.3:
-            return self._resolve_turnover(state, holder, "pressed")
+        # A defender in touching distance engages the holder: duel first,
+        # the chosen action only if the holder rides the challenge
+        challenger = min(
+            defending_team.players,
+            key=lambda p: p.position.distance_to(holder.position),
+            default=None
+        ) if defending_team.players else None
+        challenger_dist = (challenger.position.distance_to(holder.position)
+                           if challenger else 50.0)
 
-        # Decision: shoot, dribble, or pass (dual-process decision model)
+        if (challenger_dist < CHALLENGE_RADIUS
+                and self.rng.random() < CHALLENGE_CHANCE):
+            duel_event = self._resolve_duel(state, holder, challenger,
+                                            attacking_team, defending_team)
+            if duel_event is not None:
+                return duel_event
+            # Rode the challenge: play continues this tick
+
+        # Pressed deep in their own end, players clear their lines instead
+        # of playing through it
+        holder_frame_y = attacking_team.frame_y(holder.position.y)
+        if (holder_frame_y < HOLDER_CLEARANCE_FRAME_Y
+                and challenger_dist < CHALLENGE_RADIUS + 2.0
+                and self.rng.random() < HOLDER_CLEARANCE_CHANCE):
+            return self.passes.clear_danger(state, holder, attacking_team)
+
+        # Decision: shoot, dribble, cross or pass (dual-process model)
         action = self.decide_action(holder, attacking_team, defending_team, state)
 
         if action == "shoot" and self.in_shooting_range(holder.position, attacking_team):
@@ -103,6 +144,12 @@ class DefaultActionResolver:
         if action == "dribble":
             return self._resolve_dribble(state, holder, attacking_team,
                                          defending_team)
+        if action == "cross":
+            cross_event = self.passes.resolve_cross(state, holder,
+                                                    attacking_team, defending_team)
+            if cross_event is not None:
+                return cross_event
+            # Nobody in the box after all: fall through to a normal pass
 
         # pass_forward / pass_safe bias the pass-target scoring; anything
         # else (a stub model's plain "pass") is neutral
@@ -172,6 +219,7 @@ class DefaultActionResolver:
             lanes=lanes,
             best_forward_lane=best_forward,
             best_safe_lane=best_safe,
+            box_targets=len(box_targets(holder, attacking_team)),
         )
 
     def in_shooting_range(self, pos: Position, attacking_team: Team) -> bool:
@@ -270,7 +318,7 @@ class DefaultActionResolver:
                 success=True,
                 description=f"{dribbler.name} beats {nearest_def.name}"
             )
-        return self._resolve_tackle(state, dribbler, nearest_def)
+        return self._resolve_tackle(state, dribbler, nearest_def, q_defender)
 
     def move_dribbler(self, dribbler: Player, state: MatchState,
                       attacking_team: Team):
@@ -280,9 +328,35 @@ class DefaultActionResolver:
         dribbler.position = new_pos.clamp()
         state.ball.position = dribbler.position
 
+    def _resolve_duel(self, state: MatchState, holder: Player,
+                      challenger: Player, attacking_team: Team,
+                      defending_team: Team) -> Optional[MatchEvent]:
+        """A defender engages the holder. Outcomes: foul (free kick),
+        dispossession (via the tackle path), or None - the holder rides
+        the challenge and play continues."""
+        q_holder = execution_quality(holder, 'dribbling', state,
+                                     defending_team,
+                                     momentum=attacking_team.momentum)
+        q_challenger = execution_quality(challenger, 'defending', state,
+                                         attacking_team,
+                                         momentum=defending_team.momentum)
+
+        if self.rng.random() < self._foul_chance(challenger, q_challenger):
+            return self._resolve_foul(state, holder, challenger)
+
+        if self.rng.random() < contest(q_challenger, q_holder):
+            return self._resolve_tackle(state, holder, challenger, q_challenger)
+
+        return None  # held them off
+
     def _resolve_tackle(self, state: MatchState, attacker: Player,
-                        defender: Player) -> MatchEvent:
-        """Resolve a tackle attempt"""
+                        defender: Player,
+                        defender_quality: float = 0.5) -> MatchEvent:
+        """Resolve a tackle attempt: clean win, deflection out, or a foul"""
+        # Mistimed challenge: foul, possible card, free kick
+        if self.rng.random() < self._foul_chance(defender, defender_quality):
+            return self._resolve_foul(state, attacker, defender)
+
         tackle_event = MatchEvent(
             minute=state.minute,
             event_type="tackle",
@@ -306,6 +380,66 @@ class DefaultActionResolver:
         state.ball.give_to(defender)
         state.switch_possession()
         return tackle_event
+
+    def _foul_chance(self, defender: Player, execution_q: float) -> float:
+        """Foul = intent (aggression) x mistiming (1 - execution quality).
+        The execution quality already carries fatigue, pressure, confidence
+        and momentum, so all those factors flow into fouling for free."""
+        intent = FOUL_INTENT_BASE + (defender.aggression - 50) / 100.0 * FOUL_INTENT_AGGRESSION
+        return max(0.02, intent * (1.0 - execution_q))
+
+    def _resolve_foul(self, state: MatchState, attacker: Player,
+                      defender: Player) -> MatchEvent:
+        """A mistimed challenge: publish the foul (and any card), then
+        restart with a free kick for the fouled player's team."""
+        foul_event = MatchEvent(
+            minute=state.minute,
+            event_type="foul",
+            player=defender,
+            target_player=attacker,
+            position=attacker.position,
+            success=False,
+            description=f"{defender.name} fouls {attacker.name}"
+        )
+        self.publish(foul_event, state)
+        self._book_if_warranted(state, defender)
+
+        attacked_team = (state.home_team
+                         if attacker in state.home_team.players
+                         else state.away_team)
+        return self.restarts.free_kick(state, attacker, attacked_team)
+
+    def _book_if_warranted(self, state: MatchState, defender: Player) -> None:
+        """Card decision for a foul: straight red (rare), yellow (common
+        for aggressive players), second yellow = red = sent off."""
+        aggression_tilt = (defender.aggression - 50) / 100.0
+        roll = self.rng.random()
+
+        if roll < STRAIGHT_RED_CHANCE:
+            self._send_off(state, defender)
+            return
+
+        yellow_chance = YELLOW_CARD_CHANCE + aggression_tilt * YELLOW_AGGRESSION_WEIGHT
+        if roll < STRAIGHT_RED_CHANCE + yellow_chance:
+            defender.yellow_cards += 1
+            self.publish(MatchEvent(
+                minute=state.minute, event_type="yellow_card",
+                player=defender, position=defender.position, success=False,
+                description=f"Yellow card for {defender.name}"), state)
+            if defender.yellow_cards >= 2:
+                self._send_off(state, defender)
+
+    def _send_off(self, state: MatchState, player: Player) -> None:
+        """Red card: the player leaves the pitch; their team plays on
+        short-handed."""
+        player.sent_off = True
+        self.publish(MatchEvent(
+            minute=state.minute, event_type="red_card",
+            player=player, position=player.position, success=False,
+            description=f"RED CARD! {player.name} is sent off"), state)
+        for team in (state.home_team, state.away_team):
+            if player in team.players:
+                team.players.remove(player)
 
     def _resolve_turnover(self, state: MatchState, loser: Player,
                           reason: str) -> MatchEvent:

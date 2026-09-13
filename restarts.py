@@ -75,6 +75,16 @@ class SimpleRestartPolicy:
         return self.goal_kick(state, end_defenders,
                               f"Goal kick for {end_defenders.name}")
 
+    def free_kick(self, state: MatchState, fouled: Player,
+                  team: Team) -> MatchEvent:
+        """Restart after a foul: the fouled player's team takes the free
+        kick from where it happened (no direct free kicks or penalties
+        yet - a simple possession restart)."""
+        spot = Position(fouled.position.x, fouled.position.y)
+        return self._restart_possession(
+            state, team, spot, "free_kick",
+            f"Free kick for {team.name}")
+
     def goal_kick(self, state: MatchState, defending_team: Team,
                   description: str = "") -> MatchEvent:
         """Restart with the defending team's goalkeeper."""

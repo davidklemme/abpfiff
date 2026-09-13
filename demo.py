@@ -16,7 +16,8 @@ from teams import (
     create_pep_city,
     create_klopp_liverpool,
     create_mourinho_bus,
-    flip_team_positions
+    flip_team_positions,
+    make_identity_distinct
 )
 from visualizer import ASCIIVisualizer, CompactVisualizer, EventLogVisualizer
 
@@ -42,16 +43,13 @@ def run_visual_match(home_style: str = "positional_play",
         home, _ = create_tactical_matchup(home_style, "balanced")
 
     if away_style == "pep":
-        away = create_pep_city()
-        away.name = "FC Guardiola B"
+        away = make_identity_distinct(create_pep_city(), " B")
         flip_team_positions(away)
     elif away_style == "klopp":
-        away = create_klopp_liverpool()
-        away.name = "FC Gegenpresser"
+        away = make_identity_distinct(create_klopp_liverpool(), " B")
         flip_team_positions(away)
     elif away_style == "mourinho":
-        away = create_mourinho_bus()
-        away.name = "FC Bus"
+        away = make_identity_distinct(create_mourinho_bus(), " B")
         flip_team_positions(away)
     else:
         _, away = create_tactical_matchup("balanced", away_style)  # Already flipped

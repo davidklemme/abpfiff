@@ -25,8 +25,14 @@ class TeamCounters:
     throw_ins: int = 0
     corners: int = 0
     goal_kicks: int = 0
+    free_kicks: int = 0
     tackles_won: int = 0
     interceptions: int = 0
+    crosses: int = 0
+    clearances: int = 0
+    fouls: int = 0
+    yellow_cards: int = 0
+    red_cards: int = 0
 
     @property
     def shots(self) -> int:
@@ -90,10 +96,22 @@ class MatchMetrics:
             counters.corners += 1
         elif etype == "goal_kick":
             counters.goal_kicks += 1
+        elif etype == "free_kick":
+            counters.free_kicks += 1
         elif etype == "tackle":
             counters.tackles_won += 1
         elif etype == "interception":
             counters.interceptions += 1
+        elif etype == "cross":
+            counters.crosses += 1
+        elif etype == "clearance":
+            counters.clearances += 1
+        elif etype == "foul":
+            counters.fouls += 1
+        elif etype == "yellow_card":
+            counters.yellow_cards += 1
+        elif etype == "red_card":
+            counters.red_cards += 1
 
     def on_tick(self, state: MatchState) -> None:
         self.ticks += 1
