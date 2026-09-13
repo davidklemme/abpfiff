@@ -105,7 +105,8 @@ CI (`.github/workflows/ci.yml`) runs all suites plus the validation gate.
 fails CI) and a **target band** (real-football realism goal, warns only) -
 tighten gates toward targets as calibration and the ball model improve.
 
-See `docs/reviews/` for engine reviews and the current roadmap.
+See `docs/reviews/` for engine reviews and the current roadmap, and
+`docs/specs/` for design specs (temporal continuity).
 
 ## Architecture
 
@@ -137,6 +138,7 @@ anstoss-engine/
 ├── validate.py     # Statistical validation harness (CI gate + realism targets)
 ├── teams.py        # Team/player creation utilities
 ├── visualizer.py   # ASCII rendering
+├── debug_view.py   # Step-by-step colored debug visualizer
 └── demo.py         # Demo script
 ```
 

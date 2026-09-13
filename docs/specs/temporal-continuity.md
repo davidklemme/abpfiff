@@ -63,9 +63,12 @@ end (engine or runner invokes it):
 
 - **Flush pending decisions**: a decision whose outcome never arrived
   is dropped, never learned from.
-- **Consolidate**: apply time-decay once (`bank.decay`), prune to
-  `MAX_LEARNED_MEMORIES`, forget below `MIN_MEMORY_STRENGTH`. No
-  boundary-time merging beyond the in-match rule (principle 3).
+- **Consolidate**: apply *between-match* decay for the rest days
+  (`bank.decay` at a calmer rate than the in-match `DECAY_PER_MINUTE` -
+  match-time decay already runs continuously per tick, engine.py, so
+  the boundary must not re-apply it), prune to `MAX_LEARNED_MEMORIES`,
+  forget below `MIN_MEMORY_STRENGTH`. No boundary-time merging beyond
+  the in-match rule (principle 3).
 - **Psych state reversion**: confidence mean-reverts toward baseline
   (a night's sleep), momentum resets to neutral, fatigue recovers as a
   function of rest days. Traumas do NOT revert — that is what makes
