@@ -289,6 +289,29 @@ reserved for the laws of the game (bounds, restarts, cards).
   career continuity, implemented now because retrofitting identity later
   touches everything.
 
+### Perception round (implemented)
+
+Players are no longer omniscient. `perception.py` builds the holder's
+PERCEIVED world at decision time: true positions inside a focus whose
+range the vision attribute widens and pressure narrows (tunnel vision via
+the same System 1 weight that governs decisions); outside it, experience
+fills in the formation prior — perceived = certainty·truth +
+(1−certainty)·expected, with players behind the holder (frame-aware)
+seen less. A player standing where expected is perceived correctly even
+at low certainty; only the unexpected can be misjudged. The perceived
+world is just a different input vector to the same pipeline (lanes,
+support dimension, pass targets) — no decision logic branches on it —
+and beliefs are consequential through the existing no-teleport ball
+model: passes are aimed at the believed position, so when reality goes
+against the grain the ball runs loose or is intercepted, and the
+learning layer records the lesson. `OmniscientPerception` remains as the
+injectable null model. Measured cost of imperfect information: pass
+completion 0.82 → 0.79 (still in target); vision now has perceptual
+value (high-vision squads complete measurably more). Body orientation
+(true facing) is still unmodeled — the behind-penalty uses attack
+direction as a proxy; teammate-familiarity priors (learned expectations
+about specific teammates' runs) are a natural Phase 4 extension.
+
 ### Temporal continuity (deliberately deferred)
 
 Everything measured so far is per-match by construction; there is no

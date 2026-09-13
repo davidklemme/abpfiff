@@ -57,6 +57,7 @@ python3 tests/test_decisions.py    # Dual-process decisions + behavioral separat
 python3 tests/test_learning.py     # Experience learning: anchors, traumas, memory
 python3 tests/test_attacking_play.py  # Crossing (vector-driven) + clearances
 python3 tests/test_discipline.py   # Fouls, cards, free kicks, stable identity
+python3 tests/test_perception.py   # Visual focus, beliefs, and their consequences
 python3 validate.py --matches 20 --seed 42 --gate   # Statistical regression gate
 ```
 
@@ -81,6 +82,7 @@ anstoss-engine/
 ├── movement.py     # RoleMovementModel: off-ball player movement
 ├── ball_actions.py # DefaultActionResolver: pass/shot/dribble/duel resolution
 ├── execution.py    # Execution quality: skill x fatigue x pressure x confidence x momentum
+├── perception.py   # What the holder SEES: focus + formation-prior fill-in (beliefs can be wrong)
 ├── situation.py    # SituationEmbedding: compact description of the decision moment
 ├── instincts.py    # InstinctBank: role-seeded + experience-written System 1 responses
 ├── decisions.py    # DecisionModel seam + dual-process (System 1/2) action selection

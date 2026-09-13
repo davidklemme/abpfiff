@@ -20,6 +20,7 @@ from passing import (  # noqa: F401 (CONTROL_RADIUS re-exported for tests)
     PassResolver, CONTROL_RADIUS, box_targets
 )
 from shooting import ShotResolver
+from perception import FocalPerception, PerceptionModel
 
 # Chance a won tackle deflects the ball over the nearest touchline
 TACKLE_DEFLECTION_CHANCE = 0.3
@@ -65,13 +66,17 @@ class DefaultActionResolver:
                  rng: Optional[random.Random] = None,
                  randomness: float = 0.3,
                  publish: Optional[Callable[[MatchEvent, MatchState], None]] = None,
-                 decision_model: Optional[DecisionModel] = None):
+                 decision_model: Optional[DecisionModel] = None,
+                 perception: Optional[PerceptionModel] = None):
         self.space_control = space_control or SpaceControl(resolution=10)
         self.restarts = restart_policy or SimpleRestartPolicy(rng=rng)
         self.rng = rng or random.Random()
         self.randomness = randomness
         self.publish = publish or (lambda event, state: None)
         self.decision_model = decision_model or DualProcessDecisionModel(rng=self.rng)
+        # What the holder sees: decisions and pass aiming both run on the
+        # perceived world, so wrong beliefs have physical consequences
+        self.perception = perception or FocalPerception()
         self.passes = PassResolver(self.space_control, self.restarts,
                                    self.rng, randomness, self.publish)
         self.shots = ShotResolver(self.restarts, self.rng, randomness,
@@ -135,8 +140,12 @@ class DefaultActionResolver:
                 and self.rng.random() < HOLDER_CLEARANCE_CHANCE):
             return self.passes.clear_danger(state, holder, attacking_team)
 
-        # Decision: shoot, dribble, cross or pass (dual-process model)
-        action = self.decide_action(holder, attacking_team, defending_team, state)
+        # Decision: shoot, dribble, cross or pass (dual-process model).
+        # The context is built on the PERCEIVED world, and the chosen pass
+        # resolves against the same beliefs the decision was made on.
+        context = self.build_decision_context(holder, attacking_team,
+                                              defending_team, state)
+        action = self.decision_model.decide(context)
 
         if action == "shoot" and self.in_shooting_range(holder.position, attacking_team):
             return self.shots.resolve_shot(state, holder, attacking_team,
@@ -156,7 +165,8 @@ class DefaultActionResolver:
         bias = PASS_BIAS_BY_ACTION.get(action, 0.0)
         return self.passes.resolve_pass(state, holder, attacking_team,
                                         defending_team, forward_bias=bias,
-                                        turnover=self._resolve_turnover)
+                                        turnover=self._resolve_turnover,
+                                        lanes=context.lanes)
 
     def _resolve_ball_in_flight(self, state: MatchState) -> Optional[MatchEvent]:
         """Handle ball traveling through the air/ground"""
@@ -189,9 +199,13 @@ class DefaultActionResolver:
     def build_decision_context(self, holder: Player, attacking_team: Team,
                                defending_team: Team,
                                state: MatchState) -> DecisionContext:
-        """Assemble everything the decision layer needs about this moment."""
+        """Assemble everything the decision layer needs about this moment -
+        built from the holder's PERCEIVED world, not ground truth: lanes,
+        support and pass targets all reflect beliefs that can be wrong."""
+        world = self.perception.perceive(holder, attacking_team,
+                                         defending_team, state)
         lanes = self.space_control.find_passing_lanes(
-            holder, attacking_team.players, defending_team.players
+            holder, world.teammates, world.opponents
         )
 
         f = attacking_team.frame_y
