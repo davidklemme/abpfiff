@@ -1,23 +1,61 @@
 # Anstoss Engine
 
-A tactical football match simulation engine inspired by the classic Anstoss game series.
+A tactical football match simulation engine inspired by the classic
+Anstoss series — with a psychological simulation layer at its core.
+Players don't just have stats: they perceive, decide under pressure,
+learn from what happens to them, and carry it into the next moment.
 
 ## Key Features
 
-- **Spatial control model**: Not just if-then stats, but actual pitch control calculation
-- **Tactical principles system**: Behaviors emerge from composable rules, not hardcoded formations
-- **Discoverable tactics**: You can recreate Guardiola, Klopp, or invent your own style
-- **ASCII visualization**: Watch matches unfold in your terminal - light-gray pitch, home team in blue, away in red, ball in yellow (auto-disables without a TTY or with NO_COLOR)
+- **Psychological engine**: dual-process decisions (System 1 instinct vs.
+  System 2 analysis), pressure, confidence, momentum — the blend shifts
+  with composure and cognitive load
+- **The vector principle**: every decision moment is a point in a
+  continuous situation space (`SituationEmbedding`). Factors influence
+  *dimensions of the vector*; behavior emerges from similarity to
+  remembered situations, not from if/else cascades
+- **Experience learning**: outcomes write success anchors and traumas
+  into each player's instinct bank — a cup-final miss resurfaces in cup
+  finals, not in quiet league games (state-dependent memory)
+- **Perception, not omniscience**: a player sees what's in focus; the
+  rest is filled in from experience — and when reality goes against the
+  grain, the pass goes where the *belief* was
+- **Environment & occasion**: stakes, crowd, visibility convert into
+  personal mental load through each player's sensitivity; overload
+  degrades even trained instinct
+- **Spatial control model**: actual pitch control calculation, not
+  if-then stats
+- **Tactical principles system**: behaviors emerge from composable
+  rules, not hardcoded formations — recreate Guardiola, Klopp, or invent
+  your own style
+- **Statistical validation harness**: every change is gated against
+  regression bands and measured against real-football realism targets
+- **ASCII visualization**: watch matches unfold in your terminal —
+  light-gray pitch, home team in blue, away in red, ball in yellow
+  (auto-disables without a TTY or with NO_COLOR)
+- **Deterministic**: all randomness flows through one seeded generator;
+  `SimulationConfig(seed=...)` reproduces a match exactly
 
 ## Philosophy
 
-This engine models *why* tactics work, not just *what* they are:
+This engine models *why* things happen, not just *what* the stats say.
 
-- **Positional Play (Guardiola)**: Third-man combinations, half-space occupation, inverted fullbacks
-- **Gegenpressing (Klopp/Rangnick)**: Immediate counter-press, high line, vertical transitions
-- **Low Block Counter**: Deep defense, quick transitions, exploit space behind high lines
+**Tactically**, principles interact and create emergent matchups:
 
-Tactics interact with each other, creating emergent matchups.
+- **Positional Play (Guardiola)**: third-man combinations, half-space
+  occupation, inverted fullbacks
+- **Gegenpressing (Klopp/Rangnick)**: immediate counter-press, high
+  line, vertical transitions
+- **Low Block Counter**: deep defense, quick transitions, exploit space
+  behind high lines
+
+**Psychologically**, behavior lives in a continuous vector space rather
+than branching logic. Each on-ball moment is embedded as dimensions —
+pressure, progression, time criticality, density, support, width,
+occasion load — and a player's instincts are prototypes in that same
+space, seeded by role and rewritten by lived experience. Recognition,
+the debutant effect, and trauma resurfacing all fall out of similarity
+geometry; hard branches are reserved for the laws of the game.
 
 ## Quick Start
 
@@ -76,7 +114,7 @@ as Protocols (see `interfaces.py`) and injected into the orchestrator:
 
 ```
 anstoss-engine/
-├── models.py       # Core data structures (Player, Team, Position, etc.)
+├── models.py       # Core data structures (Player, Team, Position, Environment, ...)
 ├── interfaces.py   # Component Protocols (MovementModel, ActionResolver, ...)
 ├── spatial.py      # Space control and passing lane calculations
 ├── tactics.py      # Tactical principles system
@@ -84,7 +122,7 @@ anstoss-engine/
 ├── ball_actions.py # DefaultActionResolver: pass/shot/dribble/duel resolution
 ├── execution.py    # Execution quality: skill x fatigue x pressure x confidence x momentum
 ├── perception.py   # What the holder SEES: focus + formation-prior fill-in (beliefs can be wrong)
-├── situation.py    # SituationEmbedding: compact description of the decision moment
+├── situation.py    # SituationEmbedding: the decision moment as a vector + similarity kernel
 ├── instincts.py    # InstinctBank: role-seeded + experience-written System 1 responses
 ├── decisions.py    # DecisionModel seam + dual-process (System 1/2) action selection
 ├── minds.py        # PlayerMind/MindRegistry: shared substrate for decide + learn
@@ -93,7 +131,7 @@ anstoss-engine/
 ├── shooting.py     # ShotResolver: shots, saves, parries
 ├── restarts.py     # SimpleRestartPolicy: kickoffs, throw-ins, goal kicks, corners
 ├── conditioning.py # Fatigue and momentum models
-├── psychology.py   # Phase 1 psychological engine (pressure, confidence)
+├── psychology.py   # Pressure, confidence, cognitive load, overload
 ├── engine.py       # MatchEngine: thin orchestrator + tick/minute/match loops
 ├── metrics.py      # MatchMetrics: passive per-match statistics collector
 ├── validate.py     # Statistical validation harness (CI gate + realism targets)
@@ -148,14 +186,21 @@ my_tactics = TacticalSetup(
 - [x] Lead passes / receiver movement (passes aim into space; receivers run to meet the ball)
 - [x] Fouls, yellow/red cards, sending-off, free-kick restarts
 - [x] Crossing and clearances (vector-driven attack construction)
+- [x] Perception: visual focus + experience fill-in (beliefs can be wrong)
+- [x] Experience learning: success anchors, traumas, state-dependent memory
+- [x] Cognitive load: environment, sensitivity, familiarity, overload
 - [ ] Set-piece delivery (corner/free-kick routines, penalties)
+- [ ] Temporal continuity: match/season boundaries, mind serialization, season loop
 - [ ] Substitutions and fatigue management
 - [ ] Individual player instructions
 - [ ] Opposition analysis / tactical adaptation
-- [ ] Multi-season simulation
+- [ ] Statistical calibration toward realism targets (shots, corners, throw-ins, fouls)
 - [ ] Save/load functionality
 - [ ] Web-based UI
 
 ## License
 
-MIT - Do what you want, this is a learning project.
+[PolyForm Noncommercial 1.0.0](LICENSE.md) — free and open for personal
+use: study it, play with it, modify it, share it for any noncommercial
+purpose (hobby projects, research, education). Commercial use requires
+a separate license from the author.
