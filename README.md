@@ -7,7 +7,7 @@ A tactical football match simulation engine inspired by the classic Anstoss game
 - **Spatial control model**: Not just if-then stats, but actual pitch control calculation
 - **Tactical principles system**: Behaviors emerge from composable rules, not hardcoded formations
 - **Discoverable tactics**: You can recreate Guardiola, Klopp, or invent your own style
-- **ASCII visualization**: Watch matches unfold in your terminal
+- **ASCII visualization**: Watch matches unfold in your terminal - light-gray pitch, home team in blue, away in red, ball in yellow (auto-disables without a TTY or with NO_COLOR)
 
 ## Philosophy
 
@@ -51,6 +51,8 @@ python3 tests/test_direction.py    # Attack-direction / symmetry correctness
 python3 tests/test_restarts.py     # Out-of-play restarts + kickoffs + determinism
 python3 tests/test_execution.py    # Factor-driven execution quality model
 python3 tests/test_metrics.py      # Metrics collector + validation machinery
+python3 tests/test_ball_model.py   # Lead passes, receiver runs, no-teleport possession
+python3 tests/test_visualizer.py   # ASCII rendering + colors
 python3 validate.py --matches 20 --seed 42 --gate   # Statistical regression gate
 ```
 
@@ -129,7 +131,7 @@ my_tactics = TacticalSetup(
 
 - [x] Rules-of-the-game minimum: throw-ins, corners, goal kicks as possession restarts
 - [x] Statistical validation harness (goals/shots/possession vs. real-football bands)
-- [ ] Lead passes / receiver movement (ball model currently locks target at kick time)
+- [x] Lead passes / receiver movement (passes aim into space; receivers run to meet the ball)
 - [ ] Set pieces (corners, free kicks)
 - [ ] Substitutions and fatigue management
 - [ ] Individual player instructions

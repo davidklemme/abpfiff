@@ -183,11 +183,30 @@ state: all gates green; shots/corners/throw-ins still below realism targets —
 that gap is attack-construction quality, i.e. the Phase 2 ball model, not
 constant tuning.
 
-### Phase 2 — Ball model, then psychology Phase 2
+### Phase 2a — Ball model (implemented)
 
-Lead passes into space / receiver attraction to the ball (fixes F7); only then
-start psychology Phase 2 (cognitive profile, instinct bank) per the architecture
-doc, with the same thin-slice discipline as Phase 1.
+Fixes F7: passes now aim at a frame-aware lead position ahead of the
+receiver, bounded by what the receiver can reach during the ball's flight
+(pace × flight time); the intended receiver breaks from role movement and
+runs to meet the ball; possession never teleports (an arriving pass the
+receiver didn't reach runs loose, loose balls must be run down within a
+claim radius and are chased by the nearest player of each team). The
+proximity gate exposed a latent flight bug — arrival was declared off an
+int-floored tick counter, landing balls up to one flight-speed short of
+the aim point — now positional. Covered by `tests/test_ball_model.py`.
+The ASCII visualizer also gained color (light-gray pitch, blue home / red
+away, yellow ball) and one unified absolute coordinate mapping for both
+teams.
+
+### Phase 2b — Psychology Phase 2 (next)
+
+Decision depth per the architecture doc: a `DecisionModel` seam behind
+`DefaultActionResolver` (the current probability tree becomes the trivial
+implementation), `SituationEmbedding` as a pure function over existing
+signals, seeded instinct banks, System 1/2 blending via the existing
+`system1_weight`, and behavioral-separation bands in the validation
+harness (archetypes must produce measurably different action
+distributions). Same thin-slice discipline as psychology Phase 1.
 
 ### Housekeeping (any time)
 
