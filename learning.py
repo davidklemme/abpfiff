@@ -32,6 +32,7 @@ OUTCOME_RULES: Dict[str, OutcomeRule] = {
     "goal":          OutcomeRule("player", +1.0, 0.9),
     "dribble":       OutcomeRule("player", +0.4, 0.25),
     "pass_received": OutcomeRule("target_player", +0.5, 0.3),   # the passer
+    "cross_received": OutcomeRule("target_player", +0.5, 0.3),  # the crosser
     "miss":          OutcomeRule("player", -0.5, 0.5),
     "save":          OutcomeRule("target_player", -0.3, 0.4),   # the shooter
     "interception":  OutcomeRule("target_player", -0.7, 0.5),   # the passer

@@ -425,6 +425,42 @@ produces. Order when we return: identity (done) → match/season boundary
 protocol (doc's Layer 1–4 consolidation) → mind serialization (doc §3.8)
 → Season runner → careers/Phase 4 social systems.
 
+### Benchmark suite round (implemented)
+
+`benchmark.py`: standard markers and negative samples through the real
+engine. Each marker mutates one squad (away = in-match control) and
+gates a consequence: nulled attributes must visibly hurt (dud
+detection - a dead attribute fails its marker), combos must not cancel,
+and one marker runs under a big-night environment so the sensitivity
+channel is exercised end-to-end. 15 markers, gates green on seeds
+42/7/99; CI runs seed 42.
+
+What the suite found on day one:
+
+- **Cross arrivals inflated pass completion** (metrics bug): cross
+  arrivals emitted `pass_received` with no matching launch - a
+  no-passing squad showed 20 "completed passes" from 0 attempts. Fixed
+  by tagging the ball's delivery kind; crosses now complete as
+  `cross_received` (same psychology/learning feedback, separate
+  statistic). Honest open-play completion is **0.58**, not 0.77 - the
+  target band (0.70-0.90) now correctly flags it as a calibration gap.
+- **Direct play is overpowered**: a squad with passing nulled stops
+  passing entirely (asserted) but WINS ~0.72 of goals by dribble+shoot
+  spam - the assumed consequence ("no passing loses games") is false
+  today. Kept visible as the off-target `direct-play balance` marker.
+- **Big nights suppress scoring only through sensitivity**: identical
+  default squads score normally under stakes/crowd 0.9, but a
+  nervy+sensitive squad shrinks (shots share ~0.32-0.40) and drags the
+  total down - the environment channel works, and conversion under
+  load is a calibration lever.
+- **Vision's aggregate effect is weak** (completion ratio ~0.91-0.96
+  when nulled): real but shallow; target band keeps it on the radar.
+- Solid consequences confirmed: composure (bold game dries up, shots
+  share ~0.32), pace (second to every ball), stamina (fatigue x1.4),
+  aggression both ways (fouls share 0.24 vs 0.63), shooting (goals
+  share <0.10), skill boost wins 0.67-0.91, null-everything loses
+  everything.
+
 ### Phase 4 — Social systems (later)
 
 Mentor relationships, team culture buffers on feedback, validation

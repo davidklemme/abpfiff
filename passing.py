@@ -230,7 +230,8 @@ class PassResolver:
 
         target = max(targets, key=room)
         lead = self.lead_position(crosser, target, attacking_team)
-        state.ball.start_pass(crosser, target, is_lofted=True, lead_position=lead)
+        state.ball.start_pass(crosser, target, is_lofted=True,
+                              lead_position=lead, delivery="cross")
         return MatchEvent(
             minute=state.minute,
             event_type="cross",
@@ -381,10 +382,15 @@ class PassResolver:
             control_chance -= 0.08
 
         if self.rng.random() < control_chance:
+            # Attribute the arrival to its launch kind: cross arrivals
+            # must not inflate open-play pass completion (a cross launch
+            # is counted as a cross, not a pass attempt)
+            received = ("cross_received" if ball.delivery == "cross"
+                        else "pass_received")
             ball.give_to(target)
             return MatchEvent(
                 minute=state.minute,
-                event_type="pass_received",
+                event_type=received,
                 player=target,
                 target_player=passer,
                 position=target.position,
