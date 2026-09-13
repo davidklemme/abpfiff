@@ -351,6 +351,46 @@ independent variance that can't be derived):
   capacity under load, currently routed through composure) are noted as
   future work, not attributes added on spec.
 
+### Load dimension round (implemented)
+
+The user's vector mandate applied to the cognitive-load layer: the
+occasion is now a **dimension of the situation vector**, not a
+side-channel next to it.
+
+- **`SituationEmbedding.load`** (7th dimension): the occasion's mental
+  load AS EXPERIENCED — `Environment.psychological_load` through the
+  holder's sensitivity. Memories automatically carry the load they were
+  formed under, so recognition is **state-dependent**: the veteran's
+  big-night anchors sit at high-load coordinates and match the next big
+  night by similarity alone, while a quiet league game leaves them
+  dormant. Trauma resurfacing by occasion (doc §3.7) falls out of the
+  same geometry — a cup-final trauma suppresses shooting in cup finals,
+  not in routine matches. All pinned in tests (state-dependent
+  recognition, debutant effect, big-night experience closing the gap
+  schooling cannot, occasion-selective trauma).
+- **Role schooling sits at near-zero load** (`SCHOOLING_LOAD = 0.05`):
+  the training pitch is quieter than any real match, so big nights are
+  geometrically dissimilar to pure schooling — the debutant effect
+  emerges from the metric, no branch. (First tried 0.2; that taxed
+  familiarity in every ordinary-environment situation and measurably
+  suppressed play — the constant is a flat similarity tax and must stay
+  near zero.)
+- **Fixed-scale similarity kernel** (`situation.SIMILARITY_SCALE`):
+  adding the 7th dimension exposed a metric wart — mean-absolute
+  distance divided by the dimension count compresses every existing
+  contrast whenever the embedding grows (agreement on a new axis
+  diluted the axes that differ; goals collapsed on one validation
+  seed). The kernel now measures against a fixed distance budget:
+  a new dimension costs similarity only where situations actually
+  differ on it. Prototype discrimination and every threshold built on
+  similarity (`MEMORY_MERGE_SIMILARITY`, back at 0.8, familiarity
+  levels) are now stable under dimension growth — which also makes the
+  future body_orientation dimension cheap to add.
+- **No double-counting**: `decide()`'s load formula is unchanged —
+  pressure already carries the environment channel; the embedding's
+  load dimension changes *what the bank recognizes*, not the load
+  arithmetic.
+
 ### Temporal continuity (deliberately deferred)
 
 Everything measured so far is per-match by construction; there is no
