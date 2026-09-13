@@ -391,7 +391,23 @@ side-channel next to it.
   load dimension changes *what the bank recognizes*, not the load
   arithmetic.
 
-### Temporal continuity (deliberately deferred; spec'd)
+### Temporal continuity (first slice implemented)
+
+Implemented 2026-09: `minds.close_match` (boundary protocol: flush,
+between-match decay, confidence/fatigue reversion, schooling floor),
+JSON mind serialization (learned memories only, dimension-forward,
+byte-stable round trip, dormant records preserved), `series.py`
+(persistent squads, per-match engines with derived seeds sharing one
+injected MindRegistry, seeded occasion schedule) and six trajectory
+gate/target bands (bank growth and saturation, anchor:trauma balance,
+confidence pinning, play survival, big-night familiarity gain). CI runs
+the series gate on seeds 42 and 99. First observed evolution: banks
+approach the 12-memory prune cap by match 10 (calibration signal, warn
+band), anchors hold ~54% of learned strength, no confidence pinning,
+play survives learning (late/early shots ~0.9-1.1), and the veteran
+effect is real but small (+0.001..0.012 big-night familiarity over a
+fresh squad after 10 matches) - it needs longer series or more big
+nights, which is exactly what leagues will one day generate.
 
 Spec: `docs/specs/temporal-continuity.md` — stable IDs + mind
 persistence first (boundary protocol, serialization, series runner with

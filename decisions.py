@@ -97,7 +97,9 @@ class DualProcessDecisionModel:
         self.rng = rng or random.Random()
         # Shared with the learning layer: decisions read the banks that
         # outcomes write (learning.py)
-        self.minds = minds or MindRegistry()
+        # `is not None`, not `or`: an empty registry is falsy (len 0) but
+        # still the caller's shared substrate
+        self.minds = minds if minds is not None else MindRegistry()
 
     # -- System 2: deliberate utility scoring --------------------------------
 

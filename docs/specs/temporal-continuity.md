@@ -1,6 +1,9 @@
 # Temporal Continuity — Little Spec
 
-Status: agreed direction, not yet implemented. 2026-09-13.
+Status: first slice IMPLEMENTED 2026-09-13 (minds.close_match,
+minds.to_dict/from_dict, series.py runner + occasion schedule +
+trajectory gates, tests/test_continuity.py; CI runs the series gate
+on seeds 42 and 99). Leagues/teams still deliberately deferred.
 
 For an action to have an effect outside the game it needs continuation.
 This spec defines the smallest mechanism that makes match outcomes
@@ -58,8 +61,10 @@ Pulled from the knowledge graph before writing this:
 
 ### 1. Match boundary protocol
 
-`MindRegistry.close_match(minutes_played)` — one explicit call at match
-end (engine or runner invokes it):
+`MindRegistry.close_match(players, rest_days)` — one explicit call at
+match end (the series runner invokes it; `players` is the full rosters,
+because confidence and fatigue live on players who may never have made
+an on-ball decision):
 
 - **Flush pending decisions**: a decision whose outcome never arrived
   is dropped, never learned from.
@@ -70,9 +75,10 @@ end (engine or runner invokes it):
   forget below `MIN_MEMORY_STRENGTH`. No boundary-time merging beyond
   the in-match rule (principle 3).
 - **Psych state reversion**: confidence mean-reverts toward baseline
-  (a night's sleep), momentum resets to neutral, fatigue recovers as a
-  function of rest days. Traumas do NOT revert — that is what makes
-  them traumas.
+  (a night's sleep) and fatigue recovers, both as a function of rest
+  days. Traumas do NOT revert — that is what makes them traumas.
+  (Match-scoped state — team momentum, cards, sent-off removals,
+  positions — is the series runner's reset, not the mind's.)
 - Role-seeded schooling is never pruned or decayed away: it is the
   floor lived experience is written over.
 
@@ -112,7 +118,7 @@ with a gate band (degenerate = CI fail) and a target band:
 - round-trip determinism: serialize → restore → identical next match
   under the same seed (gate)
 
-### Acceptance gates for the first slice
+### Acceptance gates for the first slice (all met)
 
 1. A 10-match series with persistent minds runs deterministically under
    a seed, and `close_match` is covered by tests (flush, reversion,

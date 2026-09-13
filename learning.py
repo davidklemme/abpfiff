@@ -72,5 +72,5 @@ class ExperienceLearning:
     def decay(self, minutes_elapsed: float) -> None:
         """Fade all learned memories with time."""
         factor = DECAY_PER_MINUTE ** minutes_elapsed
-        for mind in self.minds._minds.values():
+        for mind in self.minds:
             mind.bank.decay(factor)
