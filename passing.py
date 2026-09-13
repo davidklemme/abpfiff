@@ -34,6 +34,12 @@ CLEARANCE_OUT_CHANCE = 0.45       # cleared ball goes out of play
 CLEARANCE_BEHIND_CHANCE = 0.4     # ...of which: behind for a corner (else throw-in)
 
 
+def _real_player(target) -> Player:
+    """A lane target may be a real Player or a perception.Percept
+    (a belief about one); the ball's actual receiver is always real."""
+    return getattr(target, "player", target)
+
+
 def box_targets(holder: Player, attacking_team: Team) -> list:
     """Teammates positioned around the box (frame-aware) a cross could
     find - generous edges, since the delivery leads them further in."""
@@ -78,17 +84,24 @@ class PassResolver:
     def resolve_pass(self, state: MatchState, passer: Player,
                      attacking_team: Team, defending_team: Team,
                      forward_bias: float = 0.0,
-                     turnover: Optional[Callable] = None) -> Optional[MatchEvent]:
+                     turnover: Optional[Callable] = None,
+                     lanes: Optional[list] = None) -> Optional[MatchEvent]:
         """Resolve a pass attempt.
 
         `forward_bias` carries the decision layer's intent into target
         selection: positive (pass_forward) upweights progressive options,
         negative (pass_safe) upweights the safe ball. `turnover` resolves
-        a misplaced pass (owned by the coordinating resolver)."""
-        # Find passing options
-        lanes = self.space_control.find_passing_lanes(
-            passer, attacking_team.players, defending_team.players
-        )
+        a misplaced pass (owned by the coordinating resolver).
+
+        `lanes` are the (target, quality) options the DECISION saw - built
+        on the holder's perceived world, so targets may be Percepts whose
+        positions are beliefs. The pass is aimed at the believed position;
+        if the belief was wrong, the ball physically goes to the wrong
+        place. Without `lanes`, ground truth is used (omniscient)."""
+        if lanes is None:
+            lanes = self.space_control.find_passing_lanes(
+                passer, attacking_team.players, defending_team.players
+            )
 
         if not lanes:
             # No options, hold ball
@@ -140,7 +153,7 @@ class PassResolver:
                 score *= max(0.2, 1.0 - forward_bias * 0.5)
 
             # Avoid passing back to last passer (anti ping-pong)
-            if state.ball.passer == target:
+            if state.ball.passer is _real_player(target):
                 score *= 0.3
 
             # Bonus for passes into attacking third
@@ -158,26 +171,30 @@ class PassResolver:
         # Interceptions and first-touch checks price further risk downstream.
         exec_q = execution_quality(passer, 'passing', state, defending_team,
                                    momentum=attacking_team.momentum)
-        lane_quality = next((q for t, q in lanes if t == target), 0.5)
+        lane_quality = next((q for t, q in lanes if t is target), 0.5)
         success_prob = 0.62 + exec_q * 0.40 + lane_quality * 0.08
 
         # Add randomness
         success_prob += (self.rng.random() - 0.5) * self.randomness
 
         if self.rng.random() < success_prob:
-            # Start ball flight toward a lead position ahead of the receiver
+            # Aim ahead of the receiver's BELIEVED position: the ball flies
+            # where the passer thinks their teammate will be. The real
+            # receiver runs to meet it; if the belief was badly wrong, the
+            # ball runs loose where it lands.
             lead = self.lead_position(passer, target, attacking_team)
+            receiver = _real_player(target)
             distance = passer.position.distance_to(lead)
             is_lofted = distance > 25  # Long passes are lofted
-            state.ball.start_pass(passer, target, is_lofted, lead_position=lead)
+            state.ball.start_pass(passer, receiver, is_lofted, lead_position=lead)
             return MatchEvent(
                 minute=state.minute,
                 event_type="pass",
                 player=passer,
-                target_player=target,
+                target_player=receiver,
                 position=passer.position,
                 success=True,
-                description=f"{passer.name} passes to {target.name}"
+                description=f"{passer.name} passes to {receiver.name}"
             )
 
         # Misplaced - the coordinating resolver turns it into a turnover
