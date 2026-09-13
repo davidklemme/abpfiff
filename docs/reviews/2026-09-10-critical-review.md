@@ -391,7 +391,15 @@ side-channel next to it.
   load dimension changes *what the bank recognizes*, not the load
   arithmetic.
 
-### Temporal continuity (deliberately deferred)
+### Temporal continuity (deliberately deferred; spec'd)
+
+Spec: `docs/specs/temporal-continuity.md` — stable IDs + mind
+persistence first (boundary protocol, serialization, series runner with
+an occasion schedule, trajectory gates); leagues/teams later as the
+stakes generator. Also records the sport-independence decision: keep
+the cognition core (embedding + similarity + instinct bank + minds +
+load math) free of match semantics in-repo; extract only when a second
+sport validates the cut.
 
 Everything measured so far is per-match by construction; there is no
 continuation mechanism yet (no match/season boundary semantics, no
