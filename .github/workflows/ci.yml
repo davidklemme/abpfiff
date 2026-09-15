@@ -31,6 +31,7 @@ jobs:
           python tests/test_cognition.py
           python tests/test_continuity.py
           python tests/test_benchmark.py
+          python tests/test_spacing.py
 
       - name: Statistical validation gate
         run: python validate.py --matches 20 --seed 42 --gate

@@ -443,6 +443,7 @@ class MatchState:
 
     # Track possession changes for triggers like BALL_LOST, BALL_WON
     ticks_since_possession_change: int = 0
+    total_ticks: int = 0
 
     @property
     def attacking_team(self) -> Team:
@@ -460,3 +461,4 @@ class MatchState:
     def tick(self):
         """Called each simulation tick to update counters"""
         self.ticks_since_possession_change += 1
+        self.total_ticks += 1

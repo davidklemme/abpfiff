@@ -99,6 +99,7 @@ python3 tests/test_perception.py   # Visual focus, beliefs, and their consequenc
 python3 tests/test_cognition.py    # Cognitive load: environment, familiarity, overload
 python3 tests/test_continuity.py   # Match boundary, mind serialization, series runner
 python3 tests/test_benchmark.py    # Benchmark suite plumbing
+python3 tests/test_spacing.py      # Spatial dynamics: closing down, crowds, corridors
 python3 validate.py --matches 20 --seed 42 --gate   # Statistical regression gate
 python3 series.py --matches 10 --seed 42 --gate     # Temporal trajectory gate
 python3 benchmark.py --matches 8 --seed 42 --gate   # Attribute markers & negative samples

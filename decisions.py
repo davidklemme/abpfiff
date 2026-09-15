@@ -116,10 +116,13 @@ class DualProcessDecisionModel:
         aggression_tilt = (holder.aggression - 50) / 100.0  # -0.5 .. +0.5
         vision_factor = 0.5 + holder.effective_attribute('vision') / 200.0  # ~0.55-1.0
 
-        # SHOOT: only a real option in range
+        # SHOOT: only a real option in range; appetite grows
+        # continuously as the goal gets closer
         shoot = 0.0
         if ctx.in_shooting_range:
-            shoot = 0.42
+            goal_dist = holder.position.distance_to(
+                ctx.attacking_team.attacking_goal)
+            shoot = 0.38 + 0.35 * max(0.0, 1.0 - goal_dist / 36.0)
             if 30 < holder.position.x < 70:
                 shoot += 0.18
             if holder.effective_attribute('composure') > 70:

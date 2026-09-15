@@ -12,7 +12,7 @@ from typing import Callable, Optional
 from models import BallState, MatchEvent, MatchState, Player, Position, Team
 from spatial import SpaceControl
 from restarts import SimpleRestartPolicy, is_out_of_bounds
-from execution import execution_quality
+from execution import execution_quality, contest
 import psychology
 
 
@@ -24,6 +24,11 @@ BACKWARD_PRESSURE_MULTIPLIER = {True: 0.8, False: 0.2}
 # How close a receiver must be to an arriving ball to take it under
 # control - possession never teleports.
 CONTROL_RADIUS = 6.0
+# A defender this close to a landing cross gets to attack the ball in
+# the air (continuous weight: 0 at the rim, 1 under the ball)
+CROSS_DUEL_RADIUS = 6.0
+# Passes longer than this are lofted: they fly over the ground corridor
+LOFT_DISTANCE = 25.0
 
 # A defender intercepting a lofted ball near their own goal often can't
 # control it - they clear it, sometimes behind for a corner or over the
@@ -166,13 +171,31 @@ class PassResolver:
         if target is None:
             return None
 
-        # Pass success from the full factor stack (skill, fatigue, pressure,
-        # confidence, team momentum) plus the geometry of the chosen lane.
-        # Interceptions and first-touch checks price further risk downstream.
+        # Pass success: the passer's full factor stack (skill, fatigue,
+        # pressure, confidence, team momentum) against the REAL corridor
+        # at release - the lane the decision saw was a belief; the ball
+        # must actually clear the defenders who are there now. Tight
+        # lanes demand accuracy: openness carries real weight, so
+        # threading the press is a skill investment, not a coin flip.
+        # Interceptions in flight and the receiver's first touch price
+        # the remaining risk downstream.
         exec_q = execution_quality(passer, 'passing', state, defending_team,
                                    momentum=attacking_team.momentum)
-        lane_quality = next((q for t, q in lanes if t is target), 0.5)
-        success_prob = 0.62 + exec_q * 0.40 + lane_quality * 0.08
+        lead = self.lead_position(passer, target, attacking_team)
+        distance = passer.position.distance_to(lead)
+        if distance > LOFT_DISTANCE:
+            # A lofted ball flies OVER the bodies in between - the
+            # long switch is the physical counter to a collapsed press.
+            # Only the landing approach is contestable on the ground.
+            descent = Position(
+                passer.position.x + (lead.x - passer.position.x) * 0.7,
+                passer.position.y + (lead.y - passer.position.y) * 0.7)
+            openness = self.space_control.corridor_openness(
+                descent, lead, defending_team.players, press_bubble=0.1)
+        else:
+            openness = self.space_control.corridor_openness(
+                passer.position, lead, defending_team.players)
+        success_prob = 0.52 + exec_q * 0.34 + openness * 0.20
 
         # Add randomness
         success_prob += (self.rng.random() - 0.5) * self.randomness
@@ -182,10 +205,9 @@ class PassResolver:
             # where the passer thinks their teammate will be. The real
             # receiver runs to meet it; if the belief was badly wrong, the
             # ball runs loose where it lands.
-            lead = self.lead_position(passer, target, attacking_team)
             receiver = _real_player(target)
             distance = passer.position.distance_to(lead)
-            is_lofted = distance > 25  # Long passes are lofted
+            is_lofted = distance > LOFT_DISTANCE
             state.ball.start_pass(passer, receiver, is_lofted, lead_position=lead)
             return MatchEvent(
                 minute=state.minute,
@@ -230,8 +252,25 @@ class PassResolver:
 
         target = max(targets, key=room)
         lead = self.lead_position(crosser, target, attacking_team)
-        state.ball.start_pass(crosser, target, is_lofted=True,
-                              lead_position=lead, delivery="cross")
+
+        # Delivery is a skill: the crosser's full factor stack decides
+        # whether the ball actually arrives where intended. A mishit
+        # cross still flies - scattered off-target by an error that
+        # grows continuously as execution falls - and runs loose (or
+        # out) where it lands, for anyone to attack.
+        exec_q = execution_quality(crosser, 'passing', state, defending_team,
+                                   momentum=attacking_team.momentum)
+        accuracy = 0.35 + exec_q * 0.45
+        accuracy += (self.rng.random() - 0.5) * self.randomness
+        if self.rng.random() < accuracy:
+            state.ball.start_pass(crosser, target, is_lofted=True,
+                                  lead_position=lead, delivery="cross")
+        else:
+            error = 6.0 + (1.0 - exec_q) * 14.0
+            wayward = Position(
+                lead.x + self.rng.uniform(-error, error),
+                lead.y + self.rng.uniform(-error, error))
+            state.ball.launch_clear(crosser, wayward)
         return MatchEvent(
             minute=state.minute,
             event_type="cross",
@@ -256,6 +295,15 @@ class PassResolver:
             defending_team = state.away_team
         else:
             defending_team = state.home_team
+
+        # Balls still inside the passer's press bubble are not fair game:
+        # the harassment of the release is already priced as pressure on
+        # the passer's execution, so interceptors ramp in continuously
+        # with the distance the ball has actually traveled.
+        launch_ramp = 1.0
+        if ball.passer is not None:
+            traveled = ball.passer.position.distance_to(ball.position)
+            launch_ramp = min(1.0, traveled / 8.0)
 
         # Check each defender near the ball's path
         for defender in defending_team.players:
@@ -282,7 +330,7 @@ class PassResolver:
                 pace = defender.effective_attribute('pace')
                 base_chance += (pace - 50) / 400
 
-                if self.rng.random() < base_chance:
+                if self.rng.random() < base_chance * launch_ramp:
                     return self._resolve_interception(state, defender,
                                                       defending_team)
 
@@ -367,12 +415,37 @@ class PassResolver:
             ball.make_loose()
             return None
 
-        # First touch from the receiver's full factor stack: a tired,
-        # rattled or pressured receiver miscontrols far more often
         if target in state.home_team.players:
             own_team, opp_team = state.home_team, state.away_team
         else:
             own_team, opp_team = state.away_team, state.home_team
+
+        # A cross lands in traffic: the nearest defender close enough to
+        # attack the ball contests it in the air - a duel of two full
+        # factor stacks on the AERIAL attribute, weighted continuously
+        # by how tight the defender really is. Winning defenders clear.
+        if ball.delivery == "cross":
+            challenger = min(
+                opp_team.players,
+                key=lambda d: d.position.distance_to(ball.position),
+                default=None)
+            if challenger is not None:
+                dist = challenger.position.distance_to(ball.position)
+                weight = max(0.0, (CROSS_DUEL_RADIUS - dist)
+                             / CROSS_DUEL_RADIUS)
+                if weight > 0.0:
+                    q_receiver = execution_quality(
+                        target, 'aerial', state, opp_team,
+                        momentum=own_team.momentum)
+                    q_challenger = execution_quality(
+                        challenger, 'aerial', state, own_team,
+                        momentum=opp_team.momentum)
+                    win = contest(q_receiver, q_challenger) ** weight
+                    if self.rng.random() > win:
+                        return self.clear_danger(state, challenger, opp_team)
+
+        # First touch from the receiver's full factor stack: a tired,
+        # rattled or pressured receiver miscontrols far more often
         exec_q = execution_quality(target, 'first_touch', state, opp_team,
                                    momentum=own_team.momentum)
         control_chance = 0.78 + exec_q * 0.22

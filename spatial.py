@@ -133,6 +133,41 @@ class SpaceControl:
 
         return distance_factor * lane_factor * target_space * passer_ability
 
+    def corridor_openness(self, start: Position, end: Position,
+                          opponents: List[Player],
+                          radius: float = 6.0,
+                          press_bubble: float = 8.0) -> float:
+        """How clear the corridor from `start` to `end` actually is
+        (0..1). Each opponent near the corridor multiplies in a
+        continuous penalty - threading a ball through pressuring
+        defenders is expensive, threading it through two is much more
+        so. Defenders inside the passer's immediate bubble ramp in
+        gently: their harassment is already priced as pressure on the
+        release (execution), and a ball is played around a man at two
+        meters - it is the bodies ALONG the path that close a lane.
+        Pure geometry: ability, on either end, is priced elsewhere."""
+        openness = 1.0
+        for opponent in opponents:
+            distance, along = self._corridor_projection(opponent.position,
+                                                        start, end)
+            threat = max(0.0, 1.0 - distance / radius)
+            threat *= min(1.0, along / press_bubble)
+            openness *= 1.0 - 0.55 * threat
+        return openness
+
+    def _corridor_projection(self, point: Position, line_start: Position,
+                             line_end: Position):
+        """(perpendicular distance to the segment, distance along it)."""
+        dx = line_end.x - line_start.x
+        dy = line_end.y - line_start.y
+        len_sq = dx * dx + dy * dy
+        if len_sq == 0:
+            return point.distance_to(line_start), 0.0
+        t = max(0.0, min(1.0, ((point.x - line_start.x) * dx +
+                               (point.y - line_start.y) * dy) / len_sq))
+        closest = Position(line_start.x + t * dx, line_start.y + t * dy)
+        return point.distance_to(closest), t * math.sqrt(len_sq)
+
     def _point_to_line_distance(self, point: Position,
                                  line_start: Position, line_end: Position) -> float:
         """Calculate perpendicular distance from point to line segment"""
