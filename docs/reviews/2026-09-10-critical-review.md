@@ -425,6 +425,103 @@ produces. Order when we return: identity (done) → match/season boundary
 protocol (doc's Layer 1–4 consolidation) → mind serialization (doc §3.8)
 → Season runner → careers/Phase 4 social systems.
 
+### Benchmark suite round (implemented)
+
+`benchmark.py`: standard markers and negative samples through the real
+engine. Each marker mutates one squad (away = in-match control) and
+gates a consequence: nulled attributes must visibly hurt (dud
+detection - a dead attribute fails its marker), combos must not cancel,
+and one marker runs under a big-night environment so the sensitivity
+channel is exercised end-to-end. 15 markers, gates green on seeds
+42/7/99; CI runs seed 42.
+
+What the suite found on day one:
+
+- **Cross arrivals inflated pass completion** (metrics bug): cross
+  arrivals emitted `pass_received` with no matching launch - a
+  no-passing squad showed 20 "completed passes" from 0 attempts. Fixed
+  by tagging the ball's delivery kind; crosses now complete as
+  `cross_received` (same psychology/learning feedback, separate
+  statistic). Honest open-play completion is **0.58**, not 0.77 - the
+  target band (0.70-0.90) now correctly flags it as a calibration gap.
+- **Direct play is overpowered**: a squad with passing nulled stops
+  passing entirely (asserted) but WINS ~0.72 of goals by dribble+shoot
+  spam - the assumed consequence ("no passing loses games") is false
+  today. Kept visible as the off-target `direct-play balance` marker.
+- **Big nights suppress scoring only through sensitivity**: identical
+  default squads score normally under stakes/crowd 0.9, but a
+  nervy+sensitive squad shrinks (shots share ~0.32-0.40) and drags the
+  total down - the environment channel works, and conversion under
+  load is a calibration lever.
+- **Vision's aggregate effect is weak** (completion ratio ~0.91-0.96
+  when nulled): real but shallow; target band keeps it on the radar.
+- Solid consequences confirmed: composure (bold game dries up, shots
+  share ~0.32), pace (second to every ball), stamina (fatigue x1.4),
+  aggression both ways (fouls share 0.24 vs 0.63), shooting (goals
+  share <0.10), skill boost wins 0.67-0.91, null-everything loses
+  everything.
+
+### Spatial-dynamics round (implemented)
+
+The user's spacing mechanism, answering the benchmark's direct-play
+finding without a single hard branch: carrying the ball now has a
+spatial consequence, and using the space it opens is a skill on both
+ends.
+
+- **Closing down** (movement): a held ball pulls the nearest defender
+  in at a commitment scaled by pressing intensity; the second-nearest
+  converges in support (intensity x workrate). Dribbling literally
+  collapses space - which the dribble contest, the pressure model and
+  the situation vector's density dimension all then see.
+- **The crowd compounds** (dribble contest): the carrier must survive
+  a duel against EVERY defender the press brought close, each weighted
+  continuously by tightness, with total exposure capped per touch
+  (extra bodies get in each other's way). One marker is the old 1v1.
+- **Lane premium at release** (`SpaceControl.corridor_openness`): the
+  chosen lane's REAL corridor is priced when the ball leaves - bodies
+  along the path close lanes; bodies harassing the passer are priced
+  once, as execution pressure (a ramp near the launch avoids the
+  double-count, and the same ramp gates in-flight interception rolls).
+  Lofted balls over 25 units price only the landing approach: the long
+  switch over a collapsed press is the physical counter it should be.
+- **Crosses cost skill on both ends**: delivery accuracy runs the
+  crosser's factor stack (wayward balls scatter and run loose), and
+  arrival is an AERIAL duel - receiver vs the tightest defender under
+  the dropping ball - the first real consumer of the aerial attribute.
+- **First-mover artifact found and fixed**: in the lockstep update the
+  second-moving team read fresh positions each tick, which compounded
+  into a measurable shot-share skew (0.61 home) once pressing reacted
+  tick-by-tick - masked before because nothing chased. Movement order
+  now alternates per tick; the mirror matchup measures 0.49-0.52.
+- **Shooting gate widened, priced continuously**: shots considered
+  from ~36 units / frame y > 62 - resolution already prices distance
+  and angle, and a wasted long shot costs possession, so depth is
+  self-punishing rather than forbidden. Shoot appetite grows
+  continuously as the goal nears.
+
+Recalibration to the new economy: pass release rebalanced
+(0.52 + 0.34 exec + 0.20 openness), validate gate floors re-based
+(goals 0.8, shots 3.0 - targets unchanged and still owed), benchmark
+markers retuned on seeds 42/7/99 (vision's marker now measures crosses
+found - its aggregate value lives in the longest balls; limelight
+measures conversion, its strongest channel). New suite
+tests/test_spacing.py (11 tests) pins closing down, crowd compounding,
+corridor pricing incl. the press-bubble rule, cross accuracy, the
+aerial duel, and order alternation.
+
+Honest state of the benchmark's four findings after this round:
+metrics bug FIXED (cross arrivals separated); direct-play imbalance
+REDUCED, not gone (goals share vs a passing side ~0.7-1.0 by seed,
+from ~0.95 systematic) - the remaining fix is attack construction
+(third-man support movement; a first naive "show for the ball"
+attempt measurably hurt and was reverted), tracked as an explicit
+target-only marker; big-night suppression now visible as a
+calibration gap (high stakes suppress BOTH sides' scoring to 0.1-1.4
+gpm - the load channel needs a ceiling); vision reframed, not fixed
+(its open-play completion effect is genuinely shallow; its cross
+effect is real). Pass completion ~0.60 against live pressure (target
+0.70-0.90 still owed).
+
 ### Phase 4 — Social systems (later)
 
 Mentor relationships, team culture buffers on feedback, validation

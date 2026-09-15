@@ -5,6 +5,7 @@ Combines explicit tactical principles (tactics.py) with role-based default
 behavior. All y logic runs in the team's attacking frame (Team.frame_y),
 so the same rules serve both directions of play.
 """
+import math
 import random
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
@@ -203,9 +204,21 @@ class RoleMovementModel:
         self.rng = rng or random.Random()
 
     def update_positions(self, state: MatchState) -> None:
-        """Move players of both teams according to tactical principles"""
-        self._apply_team_movements(state.home_team, state, state.home_attacking)
-        self._apply_team_movements(state.away_team, state, not state.home_attacking)
+        """Move players of both teams according to tactical principles.
+
+        The order alternates per tick: in a lockstep update the second
+        team reads the first team's fresh positions (its strikers see
+        the just-moved defensive line, its closers the just-moved
+        carrier), which compounds into a measurable first-mover shot
+        advantage once pressing reacts tick-by-tick. Alternating makes
+        the advantage average out by construction."""
+        first, second = state.home_team, state.away_team
+        first_attacking = state.home_attacking
+        if state.total_ticks % 2:
+            first, second = second, first
+            first_attacking = not first_attacking
+        self._apply_team_movements(first, state, first_attacking)
+        self._apply_team_movements(second, state, not first_attacking)
 
     def _apply_team_movements(self, team: Team, state: MatchState,
                               team_attacking: bool) -> None:
@@ -228,6 +241,34 @@ class RoleMovementModel:
             chaser = min(candidates,
                          key=lambda p: p.position.distance_to(ball.position))
 
+        # A HELD ball on the other side collapses space: the nearest
+        # defender closes the carrier down at a sprint, the next-nearest
+        # converges in support (scaled by pressing intensity). This is
+        # the spacing consequence of carrying the ball - dribbling pulls
+        # bodies in, which the dribble contest, the pressure model and
+        # the situation vector's density dimension all then see, while
+        # the zones those defenders left stand open for the pass.
+        closer = support_presser = None
+        support_weight = 0.0
+        if (ball.holder is not None and ball.holder not in team.players):
+            candidates = [p for p in (team.outfield_players or team.players)
+                          if p is not receiver]
+            if candidates:
+                ranked = sorted(candidates, key=lambda p:
+                                p.position.distance_to(ball.position))
+                closer = ranked[0]
+                intensity = (tactics.pressing_intensity / 100.0
+                             if tactics else 0.5)
+                # How hard the first man commits scales with the team's
+                # pressing appetite: a low block contains, a press hunts
+                closer_weight = 0.40 + 0.40 * intensity
+                if len(ranked) > 1:
+                    support_presser = ranked[1]
+                    # Continuous: how hard the second man squeezes is the
+                    # team's pressing appetite times his engine
+                    support_weight = intensity * (
+                        support_presser.effective_attribute('workrate') / 100.0)
+
         for player in team.players:
             # Skip ball holder - they move via dribble
             if player.has_ball:
@@ -239,6 +280,14 @@ class RoleMovementModel:
 
             if player is chaser:
                 self._sprint_towards(player, ball.position)
+                continue
+
+            if player is closer:
+                self._converge_towards(player, ball.position, closer_weight)
+                continue
+
+            if player is support_presser:
+                self._converge_towards(player, ball.position, support_weight)
                 continue
 
             # Get active principles for this player
@@ -258,6 +307,15 @@ class RoleMovementModel:
         """Full-effort run to a spot (meeting a pass, chasing a loose ball)."""
         max_speed = (player.effective_attribute('pace') / 100) * 3
         player.position = player.position.move_towards(target, max_speed).clamp()
+
+    def _converge_towards(self, player: Player, target: Position,
+                          weight: float) -> None:
+        """Partial-effort squeeze toward a spot: the supporting presser
+        commits `weight` (0-1) of a full sprint - they close space
+        without fully abandoning their shape."""
+        max_speed = (player.effective_attribute('pace') / 100) * 3 * weight
+        if max_speed > 0:
+            player.position = player.position.move_towards(target, max_speed).clamp()
 
     def apply_movement(self, player: Player, movement: MovementInstruction,
                        state: MatchState, team: Team) -> None:

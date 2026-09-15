@@ -29,6 +29,7 @@ class TeamCounters:
     tackles_won: int = 0
     interceptions: int = 0
     crosses: int = 0
+    crosses_completed: int = 0    # cross arrivals a teammate controlled
     clearances: int = 0
     fouls: int = 0
     yellow_cards: int = 0
@@ -88,6 +89,8 @@ class MatchMetrics:
         elif etype == "pass_received":
             # player = receiver; the pass belongs to the same team
             counters.passes_completed += 1
+        elif etype == "cross_received":
+            counters.crosses_completed += 1
         elif etype == "turnover" and "misplaced_pass" in event.description:
             counters.passes_misplaced += 1
         elif etype == "throw_in":

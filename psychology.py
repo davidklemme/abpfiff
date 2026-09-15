@@ -216,6 +216,7 @@ FEEDBACK_HANDLERS = {
     "miss": _feedback_miss,
     "save": _feedback_save,
     "pass_received": _feedback_pass_received,
+    "cross_received": _feedback_pass_received,  # a found cross is a completed ball
     "miscontrol": _feedback_miscontrol,
     "interception": _feedback_interception,
     "turnover": _feedback_turnover,

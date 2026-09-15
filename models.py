@@ -275,6 +275,7 @@ class Ball:
     state: BallState = BallState.HELD
     target_position: Optional[Position] = None
     target_player: Optional[Player] = None  # Intended recipient
+    delivery: str = "pass"  # Kind of targeted flight: "pass" | "cross"
     flight_ticks_remaining: int = 0
     flight_speed: float = 0  # Units per tick
     passer: Optional[Player] = None  # Who kicked it
@@ -293,18 +294,22 @@ class Ball:
         self.passer = None
 
     def start_pass(self, passer: Player, target: Player, is_lofted: bool = False,
-                   lead_position: Optional[Position] = None):
+                   lead_position: Optional[Position] = None,
+                   delivery: str = "pass"):
         """Start a pass - ball will travel over time.
 
         `lead_position` aims the ball ahead of the receiver (a lead pass
         into space); the receiver is expected to move to meet it. Without
         it the ball is played to the receiver's feet at kick time.
+        `delivery` tags what kind of ball this is ("pass" | "cross") so
+        the arrival event can be attributed to the right statistic.
         """
         if self.holder:
             self.holder.has_ball = False
         self.holder = None
         self.passer = passer
         self.target_player = target
+        self.delivery = delivery
         if lead_position is not None:
             self.target_position = Position(lead_position.x, lead_position.y)
         else:
@@ -438,6 +443,7 @@ class MatchState:
 
     # Track possession changes for triggers like BALL_LOST, BALL_WON
     ticks_since_possession_change: int = 0
+    total_ticks: int = 0
 
     @property
     def attacking_team(self) -> Team:
@@ -455,3 +461,4 @@ class MatchState:
     def tick(self):
         """Called each simulation tick to update counters"""
         self.ticks_since_possession_change += 1
+        self.total_ticks += 1

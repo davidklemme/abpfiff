@@ -30,6 +30,8 @@ jobs:
           python tests/test_perception.py
           python tests/test_cognition.py
           python tests/test_continuity.py
+          python tests/test_benchmark.py
+          python tests/test_spacing.py
 
       - name: Statistical validation gate
         run: python validate.py --matches 20 --seed 42 --gate
@@ -38,3 +40,6 @@ jobs:
         run: |
           python series.py --matches 10 --seed 42 --gate
           python series.py --matches 10 --seed 99 --gate
+
+      - name: Attribute benchmark gate (markers, negative samples, duds)
+        run: python benchmark.py --matches 8 --seed 42 --gate

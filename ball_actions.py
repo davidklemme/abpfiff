@@ -41,13 +41,19 @@ HOLDER_CLEARANCE_CHANCE = 0.35
 # same factor stack (skill, fatigue, pressure, confidence, momentum) that
 # resolves every other contested action - so tired, rattled, pressured
 # challengers foul more without any bespoke formula.
-FOUL_INTENT_BASE = 0.5
-FOUL_INTENT_AGGRESSION = 0.6
+FOUL_INTENT_BASE = 0.7
+FOUL_INTENT_AGGRESSION = 0.7
 
 # A defender close enough to the holder engages in a challenge: the duel
 # ends in a foul, a dispossession, or the holder riding it and playing on
 CHALLENGE_RADIUS = 4.0
 CHALLENGE_CHANCE = 0.5
+# Defenders inside this radius join the dribble contest, weighted by
+# how tight they are (continuous, 0 at the rim, 1 on top of the ball);
+# the total duel exposure per touch is capped - extra bodies past that
+# mostly get in each other's way
+DRIBBLE_PRESS_RADIUS = 10.0
+DRIBBLE_MAX_EXPOSURE = 2.0
 YELLOW_CARD_CHANCE = 0.22
 YELLOW_AGGRESSION_WEIGHT = 0.10
 STRAIGHT_RED_CHANCE = 0.02
@@ -124,8 +130,13 @@ class DefaultActionResolver:
         challenger_dist = (challenger.position.distance_to(holder.position)
                            if challenger else 50.0)
 
-        if (challenger_dist < CHALLENGE_RADIUS
-                and self.rng.random() < CHALLENGE_CHANCE):
+        # Continuous in proximity: a defender right on top of the holder
+        # engages nearly every touch, one at the rim of touching
+        # distance rarely (the collapsing press makes tight defenders
+        # common, so the falloff is what keeps football playable)
+        challenge_chance = CHALLENGE_CHANCE * max(
+            0.0, 1.0 - challenger_dist / CHALLENGE_RADIUS)
+        if self.rng.random() < challenge_chance:
             duel_event = self._resolve_duel(state, holder, challenger,
                                             attacking_team, defending_team)
             if duel_event is not None:
@@ -237,10 +248,14 @@ class DefaultActionResolver:
         )
 
     def in_shooting_range(self, pos: Position, attacking_team: Team) -> bool:
-        """Check if position is in shooting range of the attacked goal"""
+        """Whether a shot is even considered from here. Deliberately
+        generous: when the box is packed, shooting from the edge is the
+        real counter - the shot RESOLUTION prices distance and angle
+        continuously, and a wasted long shot costs possession, so depth
+        is self-punishing rather than forbidden."""
         goal = attacking_team.attacking_goal
         distance = pos.distance_to(goal)
-        return distance < 30 and attacking_team.frame_y(pos.y) > 70
+        return distance < 36 and attacking_team.frame_y(pos.y) > 62
 
     def _space_ahead(self, player: Player, attacking_team: Team,
                      defending_team: Team) -> float:
@@ -308,18 +323,45 @@ class DefaultActionResolver:
                 description=f"{dribbler.name} carries the ball forward"
             )
 
-        # Contested dribble: a duel of two full factor stacks - skill,
-        # fatigue, pressure, confidence and momentum on BOTH sides
-        nearest_def = min(defenders, key=lambda p: p.position.distance_to(dribbler.position))
-
+        # Contested dribble: the carrier must survive EVERY defender the
+        # collapsing press has brought close, not just the nearest one.
+        # Each converging defender is a duel of two full factor stacks,
+        # weighted continuously by how tight they actually are - so a
+        # crowd compounds (dribbling into the swarm it attracted is how
+        # the ball is lost), while a single marker is the old 1-v-1.
         q_attacker = execution_quality(dribbler, 'dribbling', state,
                                        defending_team,
                                        momentum=attacking_team.momentum)
+
+        success_prob = 1.0
+        total_exposure = 0.0
+        biggest_threat, biggest_weight = None, 0.0
+        for defender in sorted(defenders, key=lambda p:
+                               p.position.distance_to(dribbler.position)):
+            dist = defender.position.distance_to(dribbler.position)
+            weight = max(0.0, (DRIBBLE_PRESS_RADIUS - dist)
+                         / DRIBBLE_PRESS_RADIUS)
+            if weight <= 0.0:
+                continue
+            # The crowd compounds, but with diminishing marginal bite:
+            # past DRIBBLE_MAX_EXPOSURE worth of duels per touch, extra
+            # bodies mostly get in each other's way (the per-tick
+            # re-roll already compounds risk over time)
+            room = max(0.0, DRIBBLE_MAX_EXPOSURE - total_exposure)
+            weight = min(weight, room)
+            total_exposure += weight
+            q_defender = execution_quality(defender, 'defending', state,
+                                           attacking_team,
+                                           momentum=defending_team.momentum)
+            success_prob *= contest(q_attacker, q_defender) ** weight
+            threat = weight * (0.5 + q_defender)
+            if threat > biggest_weight:
+                biggest_threat, biggest_weight = defender, threat
+        nearest_def = biggest_threat or min(
+            defenders, key=lambda p: p.position.distance_to(dribbler.position))
         q_defender = execution_quality(nearest_def, 'defending', state,
                                        attacking_team,
                                        momentum=defending_team.momentum)
-
-        success_prob = contest(q_attacker, q_defender)
         success_prob += (self.rng.random() - 0.5) * self.randomness
 
         if self.rng.random() < success_prob:
