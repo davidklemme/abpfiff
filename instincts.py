@@ -1,114 +1,56 @@
-"""
-Instinct bank: a player's fast, automatic action preferences (System 1),
-queried by situation similarity, written by experience
-(psychological-engine.md sections 3.5-3.7).
+"""Receptive-field traces for fast, automatic action preferences (System 1).
 
-Banks start SEEDED from role and attributes ("comfort actions" - what
-this kind of player reaches for without thinking). Outcomes then write
-into them: successes form success anchors that reinforce an action in
-similar situations, failures form trauma entries that suppress it.
-Confidence decides which memory class dominates retrieval (section 5.3):
-confident players sample their success anchors, rattled players feel
-their traumas and retreat to the safe ball. The action vocabulary matches
-the decision layer: shoot, dribble, pass_forward, pass_safe.
+Every trace has the same physics.  Role schooling starts broad and well-rehearsed;
+lived anchors and traumas start with a width set by player elasticity.  Retrieval
+is anisotropic, evidence accumulates logarithmically, and retention follows a
+power law advanced only at match boundaries.
 """
-from dataclasses import dataclass, replace
+import math
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Tuple
 
 from models import Player
-from situation import SituationEmbedding, similarity
+from situation import SituationEmbedding
 
 BOLD_ACTIONS = ("shoot", "dribble", "pass_forward", "cross")
 SAFE_ACTIONS = ("pass_safe",)
 ALL_ACTIONS = BOLD_ACTIONS + SAFE_ACTIONS
 
-# How strongly confidence tilts instinct sampling between bold comfort
-# actions and the safe default (design doc section 5.3).
 CONFIDENCE_TILT = 0.35
-
-# Source-level sampling: how strongly confidence amplifies success anchors
-# and how strongly being rattled amplifies trauma (section 5.3).
 ANCHOR_CONFIDENCE_GAIN = 0.5
 TRAUMA_RATTLED_GAIN = 0.5
-
-# Learning shape: new memories merge into a sufficiently similar existing
-# memory of the same action and kind instead of piling up duplicates.
-# 0.8 = a total distance budget of 1.2 across the embedding
-# (situation.SIMILARITY_SCALE is fixed, so this threshold no longer
-# needs retuning when SituationEmbedding gains dimensions).
-MEMORY_MERGE_SIMILARITY = 0.8
-
-# Role schooling is acquired on the training pitch - quieter than any
-# real match - so its prototypes sit at near-zero occasion-load.
-# Big-night situations are therefore DISSIMILAR to pure schooling in the
-# load dimension: the debutant effect emerges from geometry, and only
-# lived high-load memories close the gap. Keep this near zero: it is a
-# flat familiarity tax on every ordinary-environment situation.
 SCHOOLING_LOAD = 0.05
 
-# Recognition ("I have LIVED this moment") is a sharper judgment than
-# response retrieval: familiarity uses a squared similarity kernel (so
-# the dimension-compressed mean-absolute metric regains discrimination)
-# and discounts generic role schooling - a textbook covers everything
-# loosely, lived memories cover their situations exactly.
-ROLE_SCHOOLING_FAMILIARITY = 0.6
-PROTOTYPE_BLEND = 0.2          # how far a merge moves the prototype
-MAX_LEARNED_MEMORIES = 12      # per bank; weakest dropped beyond this
-MIN_MEMORY_STRENGTH = 0.05     # decayed below this = forgotten
-
-# How recognition aggregates over the bank. K=1 is a bare max: the single
-# best-matching memory IS the recognition, and a career of near-misses
-# adds nothing to it. Raising K lets accumulated lived experience sum
-# toward recognition - the difference between "I have been in this exact
-# moment" and "I have spent a career in moments like this" - with each
-# next-best memory carrying a geometric BLEND_DECAY weight. K=1 keeps the
-# original single-pass max at unchanged cost (this runs on every on-ball
-# decision).
-FAMILIARITY_TOP_K = 1
-FAMILIARITY_BLEND_DECAY = 0.0
-
-# Shelter from decay in proportion to the load a memory was formed under:
-# effective factor = factor ** (1 - shelter * load). At 0 every memory
-# fades alike (original behavior); at 1 a full-load memory never fades.
-# The claim under test: big nights should imprint durably, so a veteran's
-# high-load memories outlive the quiet-Tuesday ones that outnumber them.
-HIGH_LOAD_DECAY_SHELTER = 0.0
-
-# Strength ceilings in learn(): how much one outcome can imprint, and how
-# strong a brand-new memory may start. Role seeds sit at strength 1.0 and
-# are discounted to ROLE_SCHOOLING_FAMILIARITY for recognition, so a
-# learned memory that cannot exceed that discount can never become the
-# thing a player recognizes a situation BY, however exactly it matches.
-MAX_GAIN_PER_OUTCOME = 0.6
-MAX_NEW_MEMORY_STRENGTH = 0.6
-
+DIMENSIONS = 7
+SCHOOLING_WIDTH = 1.45
+SCHOOLING_REPETITIONS = 24.0
+LIVED_WIDTH_RIGID = 0.30
+LIVED_WIDTH_PLASTIC = 0.90
+ELASTICITY_EVIDENCE_HALFLIFE = 90.0
+WIDTH_FLOOR = 0.08
+WIDTH_CEILING = 1.60
+WIDTH_EXPONENT = 1.0 / (DIMENSIONS + 4.0)
+WIDTH_PRIOR_EVIDENCE = 3.0
+RETENTION_EXPONENT = 0.35
+SPACING_GAIN = 0.55
+MERGE_KERNEL_THRESHOLD = 0.35
+MAX_TRACES = 160
+MIN_RETAINED_MASS = 0.01
+RECOGNITION_SCALE = 0.12
 LEARNED_SOURCES = ("experience", "trauma")
 
 
-@dataclass
-class Instinct:
-    """One situation prototype -> action preference mapping."""
-    name: str
-    prototype: SituationEmbedding
-    action_weights: Dict[str, float]
-    strength: float = 1.0  # How ingrained (0-1); seeds are fully ingrained
-    source: str = "role"   # "role" | "experience" | "trauma"
-
-
 def _source_factor(source: str, confidence: float) -> float:
-    """Confidence-dependent sampling weight per memory class."""
-    if source == "experience":  # success anchors: confident players lean in
+    if source == "experience":
         return 1.0 + ANCHOR_CONFIDENCE_GAIN * max(0.0, confidence)
-    if source == "trauma":      # trauma: rattled players feel it more
+    if source == "trauma":
         return 1.0 + TRAUMA_RATTLED_GAIN * max(0.0, -confidence)
     return 1.0
 
 
-def aggression_tilted(weights: Dict[str, float],
-                      aggression: float) -> Dict[str, float]:
-    """The one place personality tilts an action-weight map bold/safe:
-    used for seeding banks AND for the untrained-instinct fallback."""
-    tilt = (aggression - 50) / 100.0  # -0.5 .. +0.5
+def aggression_tilted(weights: Dict[str, float], aggression: float) -> Dict[str, float]:
+    """Tilt a role/fallback action map once, from the player's personality."""
+    tilt = (aggression - 50) / 100.0
     return {
         action: max(0.01, weight * (1.0 + tilt * 0.6 if action in BOLD_ACTIONS
                                     else 1.0 - tilt * 0.6))
@@ -116,185 +58,201 @@ def aggression_tilted(weights: Dict[str, float],
     }
 
 
-def _aggregate_recognition(recognitions: List[float]) -> float:
-    """Fold per-memory recognitions into one number (see FAMILIARITY_TOP_K).
+@dataclass
+class Instinct:
+    """A situation prototype with its own per-axis receptive field."""
+    name: str
+    prototype: SituationEmbedding
+    action_weights: Dict[str, float]
+    mass: float = field(default_factory=lambda: math.log1p(SCHOOLING_REPETITIONS))
+    source: str = "role"
+    widths: Tuple[float, ...] = field(default_factory=lambda: (SCHOOLING_WIDTH,) * DIMENSIONS)
+    repetitions: float = SCHOOLING_REPETITIONS
+    spacing: float = SCHOOLING_REPETITIONS
+    age: float = 0.0
+    birth_width: float = SCHOOLING_WIDTH
 
-    Uncapped: callers that feed it into a 0-1 familiarity cap it, while
-    diagnostics want to see how far past the ceiling a bank actually is."""
-    if not recognitions:
-        return 0.0
-    if FAMILIARITY_TOP_K <= 1:
-        return max(recognitions)
-    best = sorted(recognitions, reverse=True)[:FAMILIARITY_TOP_K]
-    return sum(recognition * (FAMILIARITY_BLEND_DECAY ** rank)
-               for rank, recognition in enumerate(best))
+    def __post_init__(self) -> None:
+        self.widths = tuple(float(value) for value in self.widths)
+        if len(self.widths) != len(self.prototype.as_tuple()):
+            raise ValueError("trace widths must match the situation dimensions")
+        if any(value <= 0.0 for value in self.widths):
+            raise ValueError("trace widths must be positive")
+        if (self.mass < 0.0 or self.repetitions < 0.0
+                or self.spacing < 0.0 or self.age < 0.0):
+            raise ValueError("trace evidence and age cannot be negative")
 
+    def kernel(self, situation: SituationEmbedding) -> float:
+        distance = sum(abs(a - b) / width for a, b, width in
+                       zip(situation.as_tuple(), self.prototype.as_tuple(), self.widths))
+        return max(0.0, 1.0 - distance)
 
-def _sheltered(factor: float, load: float) -> float:
-    """A decay factor softened by the load its memory was formed under."""
-    if HIGH_LOAD_DECAY_SHELTER <= 0.0 or factor <= 0.0:
-        return factor
-    exponent = 1.0 - HIGH_LOAD_DECAY_SHELTER * max(0.0, min(1.0, load))
-    return factor ** exponent
-
-
-def _blend_prototypes(old: SituationEmbedding,
-                      new: SituationEmbedding) -> SituationEmbedding:
-    keep = 1.0 - PROTOTYPE_BLEND
-    return SituationEmbedding(*(keep * a + PROTOTYPE_BLEND * b
-                                for a, b in zip(old.as_tuple(), new.as_tuple())))
+    def retained_mass(self) -> float:
+        exponent = RETENTION_EXPONENT / (
+            1.0 + SPACING_GAIN * math.log1p(self.spacing))
+        return self.mass * (1.0 + self.age) ** -exponent
 
 
 class InstinctBank:
-    """Similarity-queried store of a player's automatic responses."""
+    """A bounded, similarity-queried store of automatic responses."""
 
-    def __init__(self, instincts: List[Instinct]):
+    def __init__(self, instincts: List[Instinct], elasticity: int = 50):
         self.instincts = instincts
+        self.elasticity_trait = max(0.0, min(1.0, elasticity / 100.0))
+        self.accumulated_evidence = sum(
+            trace.repetitions for trace in instincts if isinstance(trace, Instinct)
+            and trace.source in LEARNED_SOURCES)
 
-    # -- retrieval (System 1) ------------------------------------------------
+    def _traces(self):
+        # Some clients attach sentinels to banks; they are metadata, not traces.
+        return (trace for trace in self.instincts if isinstance(trace, Instinct))
 
-    def recall(self, situation: SituationEmbedding,
-               confidence: float = 0.0):
-        """One pass over the bank: (action weights, familiarity).
-
-        The weights are similarity-weighted action preferences (System 1
-        content); familiarity is recognition - how well this player KNOWS
-        the situation. Both derive from the same prototype comparisons,
-        computed once (this runs on every on-ball decision).
-
-        Confidence acts twice on the weights: it selects between memory
-        classes (success anchors vs trauma) and tilts the mix bold/safe.
-        Familiarity uses a squared kernel and discounts role schooling:
-        pre-exposure - lived memories matching this moment - is what
-        makes a veteran of fifty big nights recognize the fifty-first.
-        """
+    def recall(self, situation: SituationEmbedding, confidence: float = 0.0):
         weights = {action: 0.0 for action in ALL_ACTIONS}
-        familiarity = 0.0
-        recognitions: List[float] = []
-
-        for instinct in self.instincts:
-            sim = similarity(situation, instinct.prototype)
-
-            match = sim * instinct.strength * _source_factor(instinct.source,
-                                                             confidence)
-            for action, weight in instinct.action_weights.items():
+        recognition_evidence = 0.0
+        for trace in self._traces():
+            kernel = trace.kernel(situation)
+            retained = trace.retained_mass()
+            match = kernel * retained * _source_factor(trace.source, confidence)
+            for action, weight in trace.action_weights.items():
                 weights[action] = weights.get(action, 0.0) + match * weight
+            recognition_evidence += kernel * retained
 
-            recognition = sim * sim * instinct.strength
-            if instinct.source == "role":
-                recognition *= ROLE_SCHOOLING_FAMILIARITY
-            if FAMILIARITY_TOP_K <= 1:
-                familiarity = max(familiarity, recognition)
-            else:
-                recognitions.append(recognition)
-
-        if recognitions:
-            familiarity = _aggregate_recognition(recognitions)
-
-        # Confidence tilt
         for action in list(weights):
-            if action in BOLD_ACTIONS:
-                weights[action] *= 1.0 + CONFIDENCE_TILT * confidence
-            else:
-                weights[action] *= 1.0 - CONFIDENCE_TILT * confidence
-            weights[action] = max(0.0, weights[action])
-
+            factor = (1.0 + CONFIDENCE_TILT * confidence if action in BOLD_ACTIONS
+                      else 1.0 - CONFIDENCE_TILT * confidence)
+            weights[action] = max(0.0, weights[action] * factor)
         total = sum(weights.values())
-        if total <= 0:
+        if total <= 0.0:
             weights = {action: 1.0 / len(ALL_ACTIONS) for action in ALL_ACTIONS}
         else:
-            weights = {action: weight / total
-                       for action, weight in weights.items()}
-        return weights, min(1.0, familiarity)
+            weights = {action: value / total for action, value in weights.items()}
+        familiarity = 1.0 - math.exp(-RECOGNITION_SCALE * recognition_evidence)
+        return weights, familiarity
 
-    def query(self, situation: SituationEmbedding,
-              confidence: float = 0.0) -> Dict[str, float]:
-        """Action preferences only (see recall)."""
-        weights, _ = self.recall(situation, confidence)
-        return weights
+    def query(self, situation: SituationEmbedding, confidence: float = 0.0) -> Dict[str, float]:
+        return self.recall(situation, confidence)[0]
 
     def familiarity(self, situation: SituationEmbedding) -> float:
-        """Recognition only (see recall)."""
-        _, familiarity = self.recall(situation)
-        return familiarity
+        return self.recall(situation)[1]
 
-    def recognition_split(self,
-                          situation: SituationEmbedding) -> Tuple[float, float]:
-        """(role, learned) recognition, each folded the way familiarity
-        is, and uncapped.
-
-        Familiarity is one number, but WHICH memory class a player
-        recognizes a moment by is the whole veteran question: schooling
-        recognition is a flat floor every player is born with, so only
-        the learned side can make a trained squad differ from a fresh
-        one."""
-        role: List[float] = []
-        learned: List[float] = []
-        for instinct in self.instincts:
-            sim = similarity(situation, instinct.prototype)
-            recognition = sim * sim * instinct.strength
-            if instinct.source == "role":
-                role.append(recognition * ROLE_SCHOOLING_FAMILIARITY)
+    def recognition_split(self, situation: SituationEmbedding) -> Tuple[float, float]:
+        role = learned = 0.0
+        for trace in self._traces():
+            evidence = trace.kernel(situation) * trace.retained_mass()
+            if trace.source == "role":
+                role += evidence
             else:
-                learned.append(recognition)
-        return _aggregate_recognition(role), _aggregate_recognition(learned)
+                learned += evidence
+        convert = lambda value: 1.0 - math.exp(-RECOGNITION_SCALE * value)
+        return convert(role), convert(learned)
 
-    # -- learning (written by outcomes) ---------------------------------------
+    def _birth_width(self) -> float:
+        plasticity = self.elasticity_trait * math.exp(
+            -self.accumulated_evidence / ELASTICITY_EVIDENCE_HALFLIFE)
+        return LIVED_WIDTH_RIGID + (LIVED_WIDTH_PLASTIC - LIVED_WIDTH_RIGID) * plasticity
 
     def learn(self, situation: SituationEmbedding, action: str,
               valence: float, significance: float) -> None:
-        """Record an outcome: positive valence reinforces `action` in
-        similar situations (success anchor), negative suppresses it
-        (trauma). Similar memories merge instead of duplicating."""
-        if valence == 0 or action not in ALL_ACTIONS:
+        if valence == 0.0 or action not in ALL_ACTIONS or significance <= 0.0:
             return
-
-        source = "experience" if valence > 0 else "trauma"
-        gained = min(MAX_GAIN_PER_OUTCOME, abs(valence) * significance)
-
-        merged = self._merge_into_existing(situation, action, source, gained)
-        if not merged:
-            weight = 1.0 if valence > 0 else -1.0
+        source = "experience" if valence > 0.0 else "trauma"
+        evidence = abs(valence) * significance
+        self.accumulated_evidence += evidence
+        if not self._merge_into_existing(situation, action, source, evidence):
+            width = self._birth_width()
             self.instincts.append(Instinct(
-                name=f"{source}_{action}",
-                prototype=situation,
-                action_weights={action: weight},
-                strength=min(MAX_NEW_MEMORY_STRENGTH, 0.15 + gained),
-                source=source,
-            ))
-        self._prune()
+                name=f"{source}_{action}", prototype=situation,
+                action_weights={action: 1.0 if valence > 0.0 else -1.0},
+                mass=math.log1p(evidence), source=source,
+                widths=(width,) * DIMENSIONS, repetitions=evidence,
+                spacing=evidence, birth_width=width))
+        self._consolidate()
+
+    @staticmethod
+    def _compatible(trace: Instinct, action: str, source: str) -> bool:
+        if action not in trace.action_weights:
+            return False
+        # Schooling is reinforceable by success. Opposite-signed outcomes remain
+        # separate so consolidation cannot erase trauma/anchor semantics.
+        return trace.source == source or (trace.source == "role" and source == "experience")
 
     def _merge_into_existing(self, situation: SituationEmbedding, action: str,
-                             source: str, gained: float) -> bool:
-        for instinct in self.instincts:
-            if (instinct.source == source
-                    and action in instinct.action_weights
-                    and similarity(situation, instinct.prototype) >= MEMORY_MERGE_SIMILARITY):
-                instinct.strength = min(1.0, instinct.strength + gained * 0.5)
-                instinct.prototype = _blend_prototypes(instinct.prototype, situation)
-                return True
-        return False
+                             source: str, evidence: float) -> bool:
+        candidates = [(trace.kernel(situation), trace) for trace in self._traces()
+                      if self._compatible(trace, action, source)]
+        if not candidates:
+            return False
+        kernel, trace = max(candidates, key=lambda item: item[0])
+        if kernel < MERGE_KERNEL_THRESHOLD:
+            return False
+        old_repetitions = trace.repetitions
+        # Reinforcement after an interval carries more retention information
+        # than the same repetitions massed into one episode.
+        trace.spacing += evidence * (1.0 + 0.25 * min(trace.age, 4.0))
+        trace.repetitions += evidence
+        trace.mass = math.log1p(trace.repetitions)
+        trace.age = 0.0
+        move = evidence / (1.0 + old_repetitions + evidence)
+        old_values = trace.prototype.as_tuple()
+        new_values = situation.as_tuple()
+        trace.prototype = SituationEmbedding(*(
+            old + move * (new - old) for old, new in zip(old_values, new_values)))
+        shrink = ((old_repetitions + WIDTH_PRIOR_EVIDENCE) /
+                  (trace.repetitions + WIDTH_PRIOR_EVIDENCE)) ** WIDTH_EXPONENT
+        adapted = []
+        for old, new, current in zip(old_values, new_values, trace.widths):
+            delta = abs(new - old)
+            target = max(trace.birth_width, 2.0 * delta)
+            learned = current + move * (target - current)
+            adapted.append(max(WIDTH_FLOOR, min(WIDTH_CEILING, learned * shrink)))
+        trace.widths = tuple(adapted)
+        return True
 
-    def _prune(self) -> None:
-        learned = [i for i in self.instincts if i.source in LEARNED_SOURCES]
-        if len(learned) <= MAX_LEARNED_MEMORIES:
-            return
-        weakest = min(learned, key=lambda i: i.strength)
-        self.instincts.remove(weakest)
+    def _consolidate(self) -> None:
+        traces = list(self._traces())
+        while len(traces) > MAX_TRACES:
+            pairs = []
+            for left_index, left in enumerate(traces):
+                for right_index in range(left_index + 1, len(traces)):
+                    right = traces[right_index]
+                    if left.source != right.source or left.action_weights != right.action_weights:
+                        continue
+                    overlap = min(left.kernel(right.prototype), right.kernel(left.prototype))
+                    pairs.append((overlap, left.name, right.name, left_index, right_index))
+            if not pairs:
+                # No semantically safe merge exists; retain the newest trace and
+                # evict the stalest negligible one only as a hard safety valve.
+                victim = min(traces[:-1], key=lambda trace: (trace.retained_mass(), trace.name))
+                self.instincts.remove(victim)
+            else:
+                _, _, _, left_index, right_index = max(pairs)
+                left, right = traces[left_index], traces[right_index]
+                total = left.repetitions + right.repetitions
+                if total <= 0.0:
+                    total = 1.0
+                left.prototype = SituationEmbedding(*(
+                    (left.repetitions * a + right.repetitions * b) / total
+                    for a, b in zip(left.prototype.as_tuple(), right.prototype.as_tuple())))
+                left.widths = tuple(max(a, b) for a, b in zip(left.widths, right.widths))
+                left.repetitions += right.repetitions
+                left.spacing += right.spacing
+                left.mass = math.log1p(left.repetitions)
+                left.age = min(left.age, right.age)
+                self.instincts.remove(right)
+            traces = list(self._traces())
 
-    def decay(self, factor: float) -> None:
-        """Fade learned memories (seeds don't fade); forget the negligible."""
-        for instinct in self.instincts:
-            if instinct.source in LEARNED_SOURCES:
-                instinct.strength *= _sheltered(factor,
-                                                instinct.prototype.load)
-        self.instincts = [i for i in self.instincts
-                          if i.source not in LEARNED_SOURCES
-                          or i.strength >= MIN_MEMORY_STRENGTH]
+    def decay(self, matches: float = 1.0) -> None:
+        """Advance the power-law retention clock by match boundaries."""
+        for trace in self._traces():
+            trace.age += max(0.0, matches)
+        self.instincts = [trace for trace in self.instincts
+                          if not isinstance(trace, Instinct)
+                          or trace.source == "role"
+                          or trace.retained_mass() >= MIN_RETAINED_MASS]
 
     def learned_memories(self) -> List[Instinct]:
-        return [i for i in self.instincts if i.source in LEARNED_SOURCES]
-
+        return [trace for trace in self._traces() if trace.source in LEARNED_SOURCES]
 
 # ---------------------------------------------------------------------------
 # Seeding: role comfort actions, shaped by attributes
@@ -373,6 +331,9 @@ def default_bank_for(player: Player) -> InstinctBank:
     return InstinctBank([
         Instinct(seed.name, _at_schooling_load(seed.prototype),
                  aggression_tilted(seed.action_weights, player.aggression),
-                 strength=seed.strength, source="role")
+                 mass=seed.mass, source="role",
+                 widths=(SCHOOLING_WIDTH,) * DIMENSIONS,
+                 repetitions=seed.repetitions, spacing=seed.spacing, age=seed.age,
+                 birth_width=SCHOOLING_WIDTH)
         for seed in ROLE_SEEDS[group]
-    ])
+    ], elasticity=player.elasticity)

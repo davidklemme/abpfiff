@@ -39,10 +39,6 @@ OUTCOME_RULES: Dict[str, OutcomeRule] = {
     "tackle":        OutcomeRule("target_player", -0.6, 0.4),   # the dribbler
 }
 
-# Learned memories fade slowly; applied once per simulated minute.
-DECAY_PER_MINUTE = 0.999
-
-
 class ExperienceLearning:
     """Pairs pending decisions with their outcomes and writes memories."""
 
@@ -68,9 +64,3 @@ class ExperienceLearning:
 
         situation, action = pending
         mind.bank.learn(situation, action, rule.valence, rule.significance)
-
-    def decay(self, minutes_elapsed: float) -> None:
-        """Fade all learned memories with time."""
-        factor = DECAY_PER_MINUTE ** minutes_elapsed
-        for mind in self.minds:
-            mind.bank.decay(factor)

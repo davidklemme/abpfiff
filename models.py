@@ -115,6 +115,10 @@ class Player:
     # skill: it barely moves within a match.
     sensitivity: int = 50
 
+    # Capacity to generalise a new experience (0-100).  It is consumed by
+    # accumulated evidence in the instinct bank rather than by a static age.
+    elasticity: int = 50
+
     # Motion state (derived each tick by the engine, smoothed): the basis
     # for facing/orientation. Not an attribute - orientation is state.
     velocity_x: float = 0.0

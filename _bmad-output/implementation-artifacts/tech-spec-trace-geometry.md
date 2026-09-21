@@ -2,8 +2,8 @@
 title: 'Trace Geometry - one memory model with per-dimension receptive fields'
 slug: 'trace-geometry'
 created: '2026-09-21'
-status: 'in-progress'
-stepsCompleted: [1, 2]
+status: 'ready-for-dev'
+stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['Python 3.12', 'stdlib only', 'no test framework (plain assert scripts)']
 files_to_modify: ['instincts.py (primary: Instinct, InstinctBank.recall/learn/decay/_prune/_merge_into_existing, ROLE_SEEDS, default_bank_for)', 'minds.py (serialization + SCHEMA_VERSION 1->2 migration, boundary decay)', 'learning.py (significance -> initial mass; delete per-tick decay path)', 'series.py (bands, probe, recognition_split, anchor/trauma aggregation)', 'decisions.py (System 2 transient hook; NOVELTY_LOAD re-derivation if familiarity shifts)', 'situation.py (SIMILARITY_SCALE deletion only; similarity() itself survives)', 'models.py (new Player.elasticity trait)', 'sweeps.py (KNOBS registry follows the constant changes)', 'tests/test_cognition.py (decay-spaced variants)', 'tests/test_learning.py', 'tests/test_continuity.py (v1 blob migration test)', 'tests/test_sweeps.py', 'tests/test_discipline.py (string marker in bank.instincts)']
 code_patterns: ['table-driven rules', 'module-level tuning constants read at call time (never as default args - frozen at import)', 'dataclasses for value objects', 'gate band / target band validation', 'seeded determinism through one injected Random', 'vector principle: factors move embedding dimensions, never if/else cascades']
@@ -313,13 +313,111 @@ Settled during elicitation (Pre-mortem Analysis, 2026-09-21):
 
 ### Tasks
 
-_Pending - produced in Step 3 after the Step 2 investigation._
+- [ ] Task 1: Replace scalar instincts with self-contained receptive-field traces
+  - File: `instincts.py`
+  - Action: Give every `Instinct` seven widths, logarithmic mass/repetition
+    state, elapsed-match age, a trace-local anisotropic kernel, and
+    power-law retained mass. Replace max/top-K recognition with bounded summed
+    evidence and make action retrieval use the same retained evidence.
+  - Notes: Keep `source` only as outcome semantics (confidence favours anchors
+    or traumas), never as a decay, merge, or retention switch. Width arrays
+    must be validated against the embedding dimension and positive values.
+- [ ] Task 2: Implement evidence-driven learning and consolidation
+  - File: `instincts.py`, `models.py`
+  - Action: Add `Player.elasticity`; use it to choose each lived trace's birth
+    width. Merge into the best compatible trace (including compatible role
+    schooling), update prototypes inversely with evidence, and update each
+    width from agreement/variation with shrinkage toward its birth prior.
+    Replace weakest-memory pruning with deterministic redundant-pair
+    consolidation.
+  - Notes: Accumulate evidence before applying `log1p`; significance controls
+    initial evidence. Consolidation must preserve signed action meaning and be
+    deterministic (no module-global RNG). Strings or other test sentinels in a
+    bank must be ignored safely.
+- [ ] Task 3: Make match boundaries the sole memory clock
+  - File: `learning.py`, `engine.py`, `minds.py`
+  - Action: Remove per-tick memory decay. At `close_match`, advance every
+    trace's age by one match and apply no source-specific exemption. Keep rest
+    days for confidence/fatigue only.
+  - Notes: A trace reinforced during a match starts the next match at age one;
+    repeated calls are deterministic. Schooling has a long tail from its
+    repetitions, not an immortal floor.
+- [ ] Task 4: Persist the new model and migrate schema v1 explicitly
+  - File: `minds.py`
+  - Action: Bump the schema to 2; serialize every trace needed to reproduce a
+    bank (`widths`, mass/evidence, repetitions, age, prior, source). Restore v2
+    byte-stably, migrate v1 `strength` records to equivalent initial mass and
+    default widths, and reject unknown schemas with `ValueError`.
+  - Notes: Since role traces now evolve, v2 snapshots must persist the complete
+    bank rather than silently re-seeding role entries. Dormant records must
+    survive without interpretation until revived.
+- [ ] Task 5: Rebase diagnostics and sweep controls on trace geometry
+  - File: `series.py`, `sweeps.py`, `situation.py`
+  - Action: Report anchor/trauma retained mass, replace count-cap bands with
+    trace-capacity bands, retain probe recognition only as a diagnostic, and
+    add behavioural veteran-vs-debutant high-load action-share plus mean
+    familiarity invariants as gates. Replace removed sweep knobs with the
+    small set of live geometry/retention constants and delete the obsolete
+    global similarity dependency from the memory path.
+  - Notes: Gate bounds must exclude the old model's measured failure and must
+    be checked across seeds 42, 7, and 99 before they are claimed as targets.
+- [ ] Task 6: Add mechanism, lifecycle, migration, and realistic behavioural tests
+  - File: `tests/test_learning.py`, `tests/test_cognition.py`,
+    `tests/test_continuity.py`, `tests/test_sweeps.py`,
+    `tests/test_discipline.py`
+  - Action: Test anisotropy, width adaptation, logarithmic accumulation,
+    repetition-flattened retention, deterministic consolidation, reinforceable
+    schooling, schema migration/rejection, and decay-spaced veteran behaviour.
+    Update assertions that intentionally referenced scalar strength/count
+    pruning.
+  - Notes: The veteran test must include schooling, varied high-load memories,
+    and a boundary after each learning episode. Keep the discipline sentinel
+    regression.
+- [ ] Task 7: Validate performance and calibration
+  - File: `docs/specs/trace-geometry.md`
+  - Action: Run every test script, both validation gates on seeds 42 and 99,
+    a three-seed series comparison, and a saturated-bank recall benchmark.
+    Record observed bounds and any deliberate calibration adjustment in the
+    final spec.
+  - Notes: A match-quality regression cannot be waived merely because the new
+    memory mechanism works.
 
 ### Acceptance Criteria
 
-_Pending - produced in Step 3. Must be behavioural (veteran vs debutant decision
-distributions under high load), not probe-point differences, per Technical
-Decision 3._
+- [ ] AC 1: Given two traces whose prototypes differ only in load, when their
+  load widths differ from their other widths, then recall discriminates by the
+  load width rather than by a global similarity scale.
+- [ ] AC 2: Given repeated compatible outcomes, when a trace is reinforced,
+  then its evidence grows logarithmically, its prototype moves less as evidence
+  grows, agreeing axes narrow, and varying axes widen within fixed bounds.
+- [ ] AC 3: Given equal one-off and spaced-reinforced traces, when match
+  boundaries advance their age, then both follow power-law loss and the spaced
+  trace retains a greater fraction without a source-specific decay rule.
+- [ ] AC 4: Given role schooling and a compatible lived outcome, when learning
+  occurs, then the school trace can be reinforced and subsequently follows the
+  same retention and geometry rules as every other trace.
+- [ ] AC 5: Given a saturated bank and a novel trace, when consolidation runs,
+  then a deterministic redundant compatible pair is combined, the novel trace
+  survives, signed action semantics are preserved, and the bank remains within
+  capacity.
+- [ ] AC 6: Given a schema-1 snapshot, when it is restored, then its scalar
+  strength is migrated without losing behaviour; given schema 2, a serialize /
+  restore / serialize cycle is byte-stable; given an unknown schema, restore
+  fails explicitly.
+- [ ] AC 7: Given four realistically spaced and varied big-night learning
+  episodes with schooling present, when veteran and identical debutant decision
+  distributions are sampled under high load with the same RNG seed, then the
+  veteran retains a reproducible bold-action advantage.
+- [ ] AC 8: Given a trained series and fresh identical players, when mean
+  familiarity is measured over actual decision situations, then it remains in
+  the calibrated invariant band so `NOVELTY_LOAD` does not silently re-scale
+  cognition.
+- [ ] AC 9: Given a cup-final trauma and an otherwise similar quiet situation,
+  when both are queried, then the trauma materially suppresses its action on
+  the matching occasion and is negligible on the quiet one.
+- [ ] AC 10: Given the full repository checks, when tests and validation gates
+  run, then all pass on seeds 42 and 99 and saturated recall has no material
+  complexity regression relative to the bounded bank size.
 
 ## Additional Context
 
@@ -360,6 +458,26 @@ _Detailed plan pending Step 3._ Fixed points already established:
 - Benchmark `recall` at a saturated bank before and after; it runs on every
   on-ball decision, and F1 means banks would sit permanently at capacity.
 
+### Implementation Results (2026-09-21)
+
+- The complete plain-script suite passes, including the new decay-spaced
+  behavioural case, anisotropic width adaptation, spacing retention, and schema
+  migration/rejection coverage.
+- `validate.py --matches 20 --seed 42 --gate` passes all regression gates at a
+  schooling birth width of 1.45. The observed 1.25 goals/match remains below the
+  calibration target but above its pre-existing regression floor.
+- Ten-match series gates pass for seeds 42 and 99. The old probe diagnostic is
+  **-0.015 on both seeds** and remains off target; it is not represented as a
+  success. The acceptance evidence is instead the controlled, decay-spaced
+  high-load action-distribution test required by Decision 21. A future larger
+  sample should replace that controlled gate with observed decision-context
+  pairs captured by `SeriesRunner`.
+- Saturated banks are bounded at 160 traces and consolidation scans only on
+  insertion beyond that bound. A dedicated microbenchmark remains desirable;
+  the full validation and series runtimes showed no functional timeout, but
+  this run did not produce a stable before/after benchmark against the removed
+  implementation.
+
 ### Notes
 
 - The System 2 transient adjustment (fast to change, expensive to fire) is the
@@ -383,3 +501,21 @@ _Detailed plan pending Step 3._ Fixed points already established:
   "Veteran signing struggles to adapt to a new system" should fall out of the
   same machinery that makes them excellent in familiar ones. Nothing in the
   engine asserts this today.
+- **System 2 transient adaptation is deferred to the next slice.** There is no
+  identified state variable, observation rule, or reset semantics from which a
+  non-arbitrary hook can be implemented. Adding a multiplier merely to make the
+  architecture look symmetric would violate the same mechanism-before-knob
+  standard that rejected top-K folding. This slice fixes System 1 and measures
+  the resulting `system1_weight`/overload path; a later spec must define what
+  System 2 learns within a match before adding state.
+- **Schooling has no hard floor.** A fringe player can atrophy toward no useful
+  automatic response, but the high repetition count gives schooling a long
+  power-law tail. A permanent floor would reintroduce a privileged memory class
+  and prevent the model from representing genuine rust. Selection/minutes are
+  not yet modelled deeply enough to calibrate that long-term edge, so it remains
+  a documented limitation rather than a special-case constant.
+- **Critical review outcome:** `psychology.system1_weight` and `overload` need
+  no new formula in this slice. They consume bounded familiarity indirectly via
+  novelty load and already expose composure as capacity. The required work is
+  therefore an invariant test and possible re-derivation of `NOVELTY_LOAD`, not
+  a second unidentifiable psychology mechanism.

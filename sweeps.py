@@ -44,10 +44,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import instincts
-import learning
 import minds
 import series
-import situation
 from series import SeriesRunner, SERIES_BANDS
 from validate import evaluate
 
@@ -61,28 +59,22 @@ from validate import evaluate
 # nothing, and documents in one place what this harness can actually
 # move.
 KNOBS: Dict[str, Tuple[object, str]] = {
-    # -- the familiarity mechanism: the candidate fixes ---------------------
-    "role_schooling": (instincts, "ROLE_SCHOOLING_FAMILIARITY"),
-    "top_k": (instincts, "FAMILIARITY_TOP_K"),
-    "blend_decay": (instincts, "FAMILIARITY_BLEND_DECAY"),
-    "load_shelter": (instincts, "HIGH_LOAD_DECAY_SHELTER"),
-    "gain_cap": (instincts, "MAX_GAIN_PER_OUTCOME"),
-    "new_strength_cap": (instincts, "MAX_NEW_MEMORY_STRENGTH"),
-    # -- memory bookkeeping -------------------------------------------------
-    "merge_similarity": (instincts, "MEMORY_MERGE_SIMILARITY"),
-    "prototype_blend": (instincts, "PROTOTYPE_BLEND"),
-    "max_memories": (instincts, "MAX_LEARNED_MEMORIES"),
-    "min_strength": (instincts, "MIN_MEMORY_STRENGTH"),
+    # -- trace geometry and retention ---------------------------------------
+    "schooling_width": (instincts, "SCHOOLING_WIDTH"),
+    "rigid_width": (instincts, "LIVED_WIDTH_RIGID"),
+    "plastic_width": (instincts, "LIVED_WIDTH_PLASTIC"),
+    "retention_exponent": (instincts, "RETENTION_EXPONENT"),
+    "spacing_gain": (instincts, "SPACING_GAIN"),
+    "merge_kernel": (instincts, "MERGE_KERNEL_THRESHOLD"),
+    "recognition_scale": (instincts, "RECOGNITION_SCALE"),
+    "max_traces": (instincts, "MAX_TRACES"),
     "schooling_load": (instincts, "SCHOOLING_LOAD"),
-    "in_match_decay": (learning, "DECAY_PER_MINUTE"),
-    "rest_day_decay": (minds, "MEMORY_DECAY_PER_REST_DAY"),
     "rest_days": (series, "DEFAULT_REST_DAYS"),
     # -- retrieval and psychology -------------------------------------------
     "confidence_tilt": (instincts, "CONFIDENCE_TILT"),
     "anchor_gain": (instincts, "ANCHOR_CONFIDENCE_GAIN"),
     "trauma_gain": (instincts, "TRAUMA_RATTLED_GAIN"),
     "confidence_retention": (minds, "CONFIDENCE_RETENTION_PER_REST_DAY"),
-    "similarity_scale": (situation, "SIMILARITY_SCALE"),
 }
 
 
@@ -250,67 +242,14 @@ BASELINE = Variant("baseline", "baseline", {}, "shipped engine")
 
 
 def approach_variants() -> List[Variant]:
-    """The candidate fixes for the big-night familiarity gain.
-
-    Four mechanisms, each swept alone first so the combos are
-    interpretable:
-
-      A. lower the schooling discount - make the floor every player is
-         born with easier for lived memory to clear
-      B. fold recognition over the top K memories instead of taking the
-         single best - let a career of similar moments add up
-      C. shelter high-load memories from decay - let big nights imprint
-         durably rather than fading at quiet-Tuesday rates
-      D. raise the strength ceilings in learn() - let one big moment
-         imprint hard enough to matter
-    """
+    """Sensitivity analysis for the shipped trace-geometry mechanism."""
     return [
-        # A. schooling discount
-        Variant("A: schooling 0.45", "approach", {"role_schooling": 0.45}),
-        Variant("A: schooling 0.30", "approach", {"role_schooling": 0.30}),
-        Variant("A: schooling 0.15", "approach", {"role_schooling": 0.15}),
-        Variant("A: schooling 0.00", "approach", {"role_schooling": 0.0},
-                "schooling stops counting as recognition at all"),
-        # B. top-k fold
-        Variant("B: top3 decay .5", "approach",
-                {"top_k": 3, "blend_decay": 0.5}),
-        Variant("B: top5 decay .5", "approach",
-                {"top_k": 5, "blend_decay": 0.5}),
-        Variant("B: top5 decay .8", "approach",
-                {"top_k": 5, "blend_decay": 0.8}),
-        Variant("B: top12 decay .7", "approach",
-                {"top_k": 12, "blend_decay": 0.7},
-                "the whole bank counts, geometrically weighted"),
-        # C. load shelter
-        Variant("C: shelter 0.25", "approach", {"load_shelter": 0.25}),
-        Variant("C: shelter 0.50", "approach", {"load_shelter": 0.50}),
-        Variant("C: shelter 0.75", "approach", {"load_shelter": 0.75}),
-        Variant("C: shelter 1.00", "approach", {"load_shelter": 1.0},
-                "a full-load memory never fades"),
-        # D. strength ceilings
-        Variant("D: caps 0.9", "approach",
-                {"gain_cap": 0.9, "new_strength_cap": 0.9}),
-        Variant("D: caps 1.0", "approach",
-                {"gain_cap": 1.0, "new_strength_cap": 1.0}),
-        Variant("D: new-cap 1.0 only", "approach",
-                {"new_strength_cap": 1.0},
-                "first impression imprints fully, merges unchanged"),
-        # Combinations of whatever the singles suggest.
-        Variant("AC: school .3 + shelter .5", "approach",
-                {"role_schooling": 0.3, "load_shelter": 0.5}),
-        Variant("AD: school .3 + caps .9", "approach",
-                {"role_schooling": 0.3, "gain_cap": 0.9,
-                 "new_strength_cap": 0.9}),
-        Variant("BC: top5 .5 + shelter .5", "approach",
-                {"top_k": 5, "blend_decay": 0.5, "load_shelter": 0.5}),
-        Variant("CD: shelter .5 + caps .9", "approach",
-                {"load_shelter": 0.5, "gain_cap": 0.9,
-                 "new_strength_cap": 0.9}),
-        Variant("ABCD: all four", "approach",
-                {"role_schooling": 0.3, "top_k": 5, "blend_decay": 0.5,
-                 "load_shelter": 0.5, "gain_cap": 0.9,
-                 "new_strength_cap": 0.9},
-                "everything at once - the upper bound on the fix"),
+        Variant("narrow load fields", "approach", {"plastic_width": 0.65}),
+        Variant("wide load fields", "approach", {"plastic_width": 1.10}),
+        Variant("faster forgetting", "approach", {"retention_exponent": 0.50}),
+        Variant("slower forgetting", "approach", {"retention_exponent": 0.22}),
+        Variant("weak spacing", "approach", {"spacing_gain": 0.25}),
+        Variant("strong spacing", "approach", {"spacing_gain": 0.85}),
     ]
 
 
@@ -324,19 +263,15 @@ def side_effect_variants() -> List[Variant]:
     mapping - these are the parameters a future tuning round will reach
     for, and nobody has yet measured what they cost."""
     sweeps: List[Tuple[str, str, List[float]]] = [
-        ("merge_similarity", "merge sim", [0.6, 0.9]),
-        ("prototype_blend", "proto blend", [0.05, 0.5]),
-        ("max_memories", "max mem", [6, 24]),
-        ("min_strength", "min strength", [0.01, 0.15]),
+        ("merge_kernel", "merge kernel", [0.2, 0.5]),
+        ("recognition_scale", "recognition", [0.08, 0.18]),
+        ("max_traces", "max traces", [80, 240]),
         ("schooling_load", "schooling load", [0.0, 0.3]),
-        ("in_match_decay", "in-match decay", [0.995, 1.0]),
-        ("rest_day_decay", "rest decay", [0.95, 1.0]),
         ("rest_days", "rest days", [2.0, 14.0]),
         ("confidence_tilt", "conf tilt", [0.1, 0.6]),
         ("anchor_gain", "anchor gain", [0.0, 1.0]),
         ("trauma_gain", "trauma gain", [0.0, 1.0]),
         ("confidence_retention", "conf retention", [0.5, 0.99]),
-        ("similarity_scale", "sim scale", [4.0, 8.0]),
     ]
     variants = []
     for knob, label, values in sweeps:
