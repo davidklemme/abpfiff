@@ -14,10 +14,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from support import make_player, run_tests
-from minds import (
-    MindRegistry, MEMORY_DECAY_PER_REST_DAY,
-    CONFIDENCE_RETENTION_PER_REST_DAY, FATIGUE_REMAINING_PER_REST_DAY,
-)
+from minds import (MindRegistry, CONFIDENCE_RETENTION_PER_REST_DAY,
+                   FATIGUE_REMAINING_PER_REST_DAY)
 from situation import SituationEmbedding
 from series import SeriesRunner, occasion_schedule
 
@@ -51,21 +49,17 @@ def test_close_match_flushes_pending_decisions():
                for i in mind.bank.learned_memories())
 
 
-def test_close_match_fades_memories_but_never_schooling():
+def test_close_match_advances_one_power_law_clock_for_every_trace():
     registry, player, mind = registry_with_memories()
-    learned_before = [i.strength for i in mind.bank.learned_memories()]
-    role_before = [i.strength for i in mind.bank.instincts
-                   if i.source == "role"]
+    before = [(i.age, i.retained_mass()) for i in mind.bank.instincts]
 
     registry.close_match([player], rest_days=7.0)
 
-    learned_after = [i.strength for i in mind.bank.learned_memories()]
-    role_after = [i.strength for i in mind.bank.instincts
-                  if i.source == "role"]
-    expected = MEMORY_DECAY_PER_REST_DAY ** 7.0
-    assert all(abs(after - before * expected) < 1e-12
-               for before, after in zip(learned_before, learned_after))
-    assert role_after == role_before  # schooling is the floor
+    after = [(i.age, i.retained_mass()) for i in mind.bank.instincts]
+    assert all(new_age == old_age + 1.0
+               for (old_age, _), (new_age, _) in zip(before, after))
+    assert all(new_mass < old_mass
+               for (_, old_mass), (_, new_mass) in zip(before, after))
 
 
 def test_close_match_reverts_state_but_not_traumas():
@@ -135,6 +129,15 @@ def test_serialization_is_dimension_forward():
     assert memory.prototype.width == 0.5   # dataclass neutral default
     assert memory.prototype.load == 0.0
     assert len(memory.prototype.as_tuple()) == len(S.as_tuple())
+
+
+def test_unknown_schema_is_rejected():
+    try:
+        MindRegistry.from_dict({"schema": 999, "minds": {}})
+    except ValueError as error:
+        assert "unsupported" in str(error)
+    else:
+        raise AssertionError("unknown schema silently accepted")
 
 
 def test_unknown_identities_stay_dormant_and_survive_reserialization():

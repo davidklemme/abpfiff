@@ -151,10 +151,10 @@ class MatchEngine:
         for model in self.conditioning:
             model.update(state, events)
 
-        # 4. Psychology fades: confidence toward neutral, memories slowly
+        # 4. Psychology fades. Memory retention advances only at the explicit
+        # match boundary, so a match cannot accidentally apply two clocks.
         minutes_elapsed = 1.0 / self.config.ticks_per_minute
         psychology.decay_all(state, minutes_elapsed=minutes_elapsed)
-        self.learning.decay(minutes_elapsed)
 
         # 5. Update motion state (smoothed velocity -> facing for perception)
         self._update_velocities(state)

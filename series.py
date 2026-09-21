@@ -29,7 +29,7 @@ from models import Ball, Environment, MatchState, Position
 from engine import MatchEngine, SimulationConfig
 from metrics import MatchMetrics
 from minds import MindRegistry, DEFAULT_REST_DAYS
-from instincts import MAX_LEARNED_MEMORIES, default_bank_for
+from instincts import MAX_TRACES, default_bank_for
 from situation import SituationEmbedding
 from teams import create_tactical_matchup
 from validate import Band, evaluate
@@ -76,8 +76,8 @@ class MatchSnapshot:
     shots: int
     crosses: int
     learned_mean: float        # learned memories per player
-    anchor_strength: float     # total strength of success anchors
-    trauma_strength: float     # total strength of traumas
+    anchor_strength: float     # total retained mass of success anchors
+    trauma_strength: float     # total retained mass of traumas
     pinned_share: float        # players with |confidence| > CONFIDENCE_PINNED
     mean_abs_confidence: float
     pass_attempts: int = 0     # match quality, for side-effect watching
@@ -168,9 +168,9 @@ class SeriesRunner:
             learned_counts.append(len(learned))
             for instinct in learned:
                 if instinct.source == "experience":
-                    anchor_strength += instinct.strength
+                    anchor_strength += instinct.retained_mass()
                 else:
-                    trauma_strength += instinct.strength
+                    trauma_strength += instinct.retained_mass()
 
         pinned = sum(1 for p in everyone
                      if abs(p.confidence) > CONFIDENCE_PINNED)
@@ -202,7 +202,7 @@ class SeriesRunner:
         return self.snapshots[0].learned_mean
 
     def anchor_share(self) -> Optional[float]:
-        """Share of learned-memory strength that is success anchors."""
+        """Share of learned retained mass that is success anchors."""
         total = self.final.anchor_strength + self.final.trauma_strength
         if total == 0:
             return None
@@ -291,13 +291,13 @@ class SeriesRunner:
 SERIES_BANDS: List[Band] = [
     Band("Learned memories / player (series end)",
          SeriesRunner.final_learned_mean,
-         gate_lo=0.5, gate_hi=float(MAX_LEARNED_MEMORIES),
-         target_lo=1.5, target_hi=float(MAX_LEARNED_MEMORIES) * 0.9),
+         gate_lo=0.5, gate_hi=float(MAX_TRACES),
+         target_lo=1.5, target_hi=float(MAX_TRACES) * 0.9),
     Band("Learned memories / player (after match 1)",
          SeriesRunner.first_match_learned_mean,
-         gate_lo=0.05, gate_hi=MAX_LEARNED_MEMORIES * 0.9,
+         gate_lo=0.05, gate_hi=MAX_TRACES * 0.9,
          target_lo=0.2, target_hi=6.0),
-    Band("Anchor share of learned strength",
+    Band("Anchor share of learned mass",
          SeriesRunner.anchor_share,
          gate_lo=0.10, gate_hi=0.95, target_lo=0.30, target_hi=0.80),
     Band("Max pinned-confidence share",

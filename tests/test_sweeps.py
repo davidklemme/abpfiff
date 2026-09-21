@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from support import make_player, run_tests
 import instincts
-import learning
 from instincts import InstinctBank, default_bank_for
 from situation import SituationEmbedding
 from sweeps import (
@@ -38,69 +37,40 @@ def trained_bank():
 
 
 # ---------------------------------------------------------------------------
-# Defaults are the shipped behavior
+# Geometry knobs are live and meaningful
 # ---------------------------------------------------------------------------
 
-def test_knob_defaults_preserve_shipped_behavior():
-    """Each new knob's default is the constant the engine shipped with:
-    no-op top-k fold, no decay shelter, the original 0.6 ceilings."""
-    assert instincts.FAMILIARITY_TOP_K == 1
-    assert instincts.FAMILIARITY_BLEND_DECAY == 0.0
-    assert instincts.HIGH_LOAD_DECAY_SHELTER == 0.0
-    assert instincts.MAX_GAIN_PER_OUTCOME == 0.6
-    assert instincts.MAX_NEW_MEMORY_STRENGTH == 0.6
+def test_width_knob_changes_new_trace_geometry():
+    narrow = InstinctBank([])
+    with overrides({"plastic_width": 0.5}):
+        narrow.learn(BIG, "shoot", valence=1.0, significance=1.0)
+    wide = InstinctBank([])
+    with overrides({"plastic_width": 1.1}):
+        wide.learn(BIG, "shoot", valence=1.0, significance=1.0)
+    assert narrow.learned_memories()[0].widths[0] < wide.learned_memories()[0].widths[0]
 
 
-def test_top_k_with_zero_blend_decay_is_exactly_the_max():
-    """Folding over more memories with zero blend weight must reproduce
-    the bare max, or the K=1 fast path and the K>1 path disagree about
-    what the same configuration means."""
+def test_recognition_scale_changes_familiarity_not_trace_content():
     bank = trained_bank()
-    baseline = bank.familiarity(BIG)
-    with overrides({"top_k": 8, "blend_decay": 0.0}):
-        assert abs(bank.familiarity(BIG) - baseline) < 1e-12
+    traces = list(bank.instincts)
+    with overrides({"recognition_scale": 0.05}):
+        low = bank.familiarity(BIG)
+    with overrides({"recognition_scale": 0.2}):
+        high = bank.familiarity(BIG)
+    assert high > low
+    assert bank.instincts == traces
 
 
-def test_top_k_blend_adds_supporting_memories():
-    bank = trained_bank()
-    baseline = bank.familiarity(BIG)
-    with overrides({"top_k": 8, "blend_decay": 0.6}):
-        assert bank.familiarity(BIG) > baseline
-
-
-def test_zero_shelter_decays_every_memory_alike():
-    bank = trained_bank()
-    before = [i.strength for i in bank.learned_memories()]
-    bank.decay(0.5)
-    after = [i.strength for i in bank.learned_memories()]
-    assert all(abs(a - b * 0.5) < 1e-12 for a, b in zip(after, before))
-
-
-def test_shelter_protects_high_load_memories_only():
-    """The mechanism's whole point: a big night should outlast a quiet
-    Tuesday, not everything decay together."""
-    bank = trained_bank()
-    quiet = next(i for i in bank.learned_memories() if i.prototype.load == 0.0)
-    big = next(i for i in bank.learned_memories() if i.prototype.load == 0.9)
-    quiet_before, big_before = quiet.strength, big.strength
-
-    with overrides({"load_shelter": 1.0}):
-        bank.decay(0.5)
-
-    assert abs(quiet.strength - quiet_before * 0.5) < 1e-12  # unsheltered
-    assert big.strength > big_before * 0.5                   # sheltered
-    assert big.strength <= big_before
-
-
-def test_strength_ceiling_knob_raises_new_memory_strength():
+def test_retention_knob_changes_aged_evidence():
     bank = InstinctBank([])
     bank.learn(BIG, "shoot", valence=1.0, significance=1.0)
-    assert bank.learned_memories()[0].strength == 0.6  # shipped ceiling
-
-    stronger = InstinctBank([])
-    with overrides({"gain_cap": 1.0, "new_strength_cap": 1.0}):
-        stronger.learn(BIG, "shoot", valence=1.0, significance=1.0)
-    assert stronger.learned_memories()[0].strength > 0.6
+    trace = bank.learned_memories()[0]
+    bank.decay(10)
+    with overrides({"retention_exponent": 0.2}):
+        slow = trace.retained_mass()
+    with overrides({"retention_exponent": 0.6}):
+        fast = trace.retained_mass()
+    assert slow > fast
 
 
 # ---------------------------------------------------------------------------
@@ -108,21 +78,21 @@ def test_strength_ceiling_knob_raises_new_memory_strength():
 # ---------------------------------------------------------------------------
 
 def test_overrides_restore_previous_values():
-    before = instincts.ROLE_SCHOOLING_FAMILIARITY
-    with overrides({"role_schooling": 0.1}):
-        assert instincts.ROLE_SCHOOLING_FAMILIARITY == 0.1
-    assert instincts.ROLE_SCHOOLING_FAMILIARITY == before
+    before = instincts.RECOGNITION_SCALE
+    with overrides({"recognition_scale": 0.1}):
+        assert instincts.RECOGNITION_SCALE == 0.1
+    assert instincts.RECOGNITION_SCALE == before
 
 
 def test_overrides_restore_even_when_the_body_raises():
     """A leaked knob would silently contaminate every later variant."""
-    before = learning.DECAY_PER_MINUTE
+    before = instincts.RETENTION_EXPONENT
     try:
-        with overrides({"in_match_decay": 0.5}):
+        with overrides({"retention_exponent": 0.5}):
             raise RuntimeError("boom")
     except RuntimeError:
         pass
-    assert learning.DECAY_PER_MINUTE == before
+    assert instincts.RETENTION_EXPONENT == before
 
 
 def test_unknown_knob_is_rejected():
@@ -191,8 +161,8 @@ def test_every_variant_only_uses_declared_knobs():
 def test_run_variants_measures_every_metric():
     """One tiny series end to end: the harness runs, measures, and the
     baseline variant leaves the engine's constants where it found them."""
-    before = instincts.ROLE_SCHOOLING_FAMILIARITY
-    variants = [BASELINE, Variant("probe", "approach", {"role_schooling": 0.2})]
+    before = instincts.RECOGNITION_SCALE
+    variants = [BASELINE, Variant("probe", "approach", {"recognition_scale": 0.2})]
     results = run_variants(variants, matches=1, seeds=[3], minutes=10,
                            workers=1)
 
@@ -200,7 +170,7 @@ def test_run_variants_measures_every_metric():
     for result in results:
         assert set(result.per_seed[3]) == set(MEASUREMENTS)
         assert result.per_seed[3]["mem/plyr"] is not None
-    assert instincts.ROLE_SCHOOLING_FAMILIARITY == before
+    assert instincts.RECOGNITION_SCALE == before
 
 
 def test_results_aggregate_across_seeds():

@@ -176,13 +176,14 @@ def test_composure_preserves_analysis_under_pressure():
     the analytical (forward-looking) game than the nervy one."""
     nervy = make_player("Nervy", role="cm", composure=30, aggression=50)
     iceman = make_player("Iceman", role="cm", composure=95, aggression=50)
-    model = DualProcessDecisionModel(rng=random.Random(11))
-
-    pressed = lambda p: make_context(p, pressure=0.8, density=0.8,
+    # Moderate pressure keeps the composed player below blend saturation;
+    # at 0.8 plus novelty both players are correctly at full System 1.
+    pressed = lambda p: make_context(p, pressure=0.5, density=0.6,
                                      best_forward=0.5, best_safe=0.2)
-    nervy_shares = action_shares(model, lambda: pressed(nervy))
-    iceman_shares = action_shares(model, lambda: pressed(iceman))
-
+    nervy_shares = action_shares(
+        DualProcessDecisionModel(rng=random.Random(11)), lambda: pressed(nervy), 2000)
+    iceman_shares = action_shares(
+        DualProcessDecisionModel(rng=random.Random(11)), lambda: pressed(iceman), 2000)
     assert iceman_shares.get("pass_forward", 0) > nervy_shares.get("pass_forward", 0)
 
 

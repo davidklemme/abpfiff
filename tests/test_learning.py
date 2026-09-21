@@ -16,7 +16,7 @@ from support import make_player, make_match, run_tests
 from models import Ball, MatchEvent, MatchState, Position
 from engine import MatchEngine, SimulationConfig
 from situation import SituationEmbedding
-from instincts import InstinctBank, MAX_LEARNED_MEMORIES
+from instincts import InstinctBank
 from minds import MindRegistry
 from learning import ExperienceLearning
 from teams import create_tactical_matchup
@@ -57,12 +57,12 @@ def test_trauma_suppresses_the_action_in_similar_situations():
 def test_similar_memories_merge_instead_of_duplicating():
     bank = empty_bank()
     bank.learn(BOX, "shoot", valence=1.0, significance=0.6)
-    strength_before = bank.learned_memories()[0].strength
+    mass_before = bank.learned_memories()[0].mass
     bank.learn(SIMILAR_BOX, "shoot", valence=1.0, significance=0.6)
 
     memories = bank.learned_memories()
     assert len(memories) == 1  # merged, not appended
-    assert memories[0].strength > strength_before
+    assert memories[0].mass > mass_before
 
 
 def test_dissimilar_memories_stay_separate():
@@ -72,26 +72,46 @@ def test_dissimilar_memories_stay_separate():
     assert len(bank.learned_memories()) == 2
 
 
-def test_bank_prunes_weakest_beyond_capacity():
-    bank = empty_bank()
-    for i in range(MAX_LEARNED_MEMORIES + 4):
-        # Spread across dissimilar situations so nothing merges
-        situation = SituationEmbedding(i % 2, (i * 0.07) % 1.0, (i * 0.13) % 1.0,
-                                       (i * 0.29) % 1.0, (i * 0.41) % 1.0)
-        bank.learn(situation, "shoot", valence=1.0, significance=0.2 + 0.02 * i)
-    assert len(bank.learned_memories()) <= MAX_LEARNED_MEMORIES
-
-
-def test_memories_decay_and_are_eventually_forgotten():
+def test_mass_is_logarithmic_and_retention_is_power_law():
     bank = empty_bank()
     bank.learn(BOX, "shoot", valence=1.0, significance=0.5)
-    strength_before = bank.learned_memories()[0].strength
+    trace = bank.learned_memories()[0]
+    first_mass = trace.mass
+    first_retained = trace.retained_mass()
+    bank.learn(BOX, "shoot", valence=1.0, significance=0.5)
 
-    bank.decay(0.9)
-    assert bank.learned_memories()[0].strength < strength_before
+    assert first_mass < trace.mass < first_mass * 2
+    bank.decay(1.0)
+    after_one = trace.retained_mass()
+    bank.decay(9.0)
+    after_ten = trace.retained_mass()
+    assert trace.mass > first_mass  # decay never destroys stored evidence
+    assert after_ten < after_one < trace.mass
+    assert after_ten > 0.0
 
-    bank.decay(0.0001)  # near-total fade
-    assert bank.learned_memories() == []
+
+def test_reinforcement_adapts_each_axis_independently():
+    bank = empty_bank()
+    bank.learn(BOX, "shoot", valence=1.0, significance=0.6)
+    trace = bank.learned_memories()[0]
+    before = trace.widths
+    varied = SituationEmbedding(0.5, 0.50, 0.5, 0.6, 0.5)
+    bank.learn(varied, "shoot", valence=1.0, significance=0.6)
+    assert trace.widths[0] < before[0]       # pressure agreed
+    assert trace.widths[1] > trace.widths[0]  # progression varied
+
+
+def test_spaced_reinforcement_flattens_retention():
+    massed, spaced = empty_bank(), empty_bank()
+    for bank in (massed, spaced):
+        bank.learn(BOX, "shoot", valence=1.0, significance=0.5)
+    massed.learn(BOX, "shoot", valence=1.0, significance=0.5)
+    spaced.decay(4.0)
+    spaced.learn(BOX, "shoot", valence=1.0, significance=0.5)
+    massed.decay(10.0)
+    spaced.decay(10.0)
+    assert spaced.learned_memories()[0].retained_mass() > \
+           massed.learned_memories()[0].retained_mass()
 
 
 def test_confidence_selects_between_anchor_and_trauma():
@@ -129,14 +149,16 @@ def _learning_fixture():
 def test_goal_outcome_reinforces_the_pending_decision():
     scorer, _, state, minds, learning = _learning_fixture()
     mind = minds.mind_for(scorer)
+    role_mass = sum(trace.mass for trace in mind.bank.instincts)
     mind.remember_decision(BOX, "shoot")
 
     goal = MatchEvent(minute=10, event_type="goal", player=scorer,
                       position=Position(50, 100))
     learning.on_event(goal, state)
 
-    memories = mind.bank.learned_memories()
-    assert len(memories) == 1 and memories[0].source == "experience"
+    # A compatible success can reinforce schooling directly; it need not
+    # manufacture a parallel "experience" class.
+    assert sum(trace.mass for trace in mind.bank.instincts) > role_mass
     assert mind.pending_decision is None  # consumed
 
 

@@ -14,13 +14,13 @@ boundary protocol, `to_dict`/`from_dict` persist minds between
 processes. Identity is the record, not the current state - everything
 here is keyed by the stable `player_id`.
 """
+import math
 from dataclasses import dataclass
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
 from models import Player
-from instincts import (
-    Instinct, InstinctBank, default_bank_for, LEARNED_SOURCES
-)
+from instincts import (Instinct, InstinctBank, default_bank_for, DIMENSIONS,
+                       LIVED_WIDTH_PLASTIC)
 from situation import SituationEmbedding
 
 # Serialization schema tag. Embedding prototypes are stored as plain
@@ -28,13 +28,11 @@ from situation import SituationEmbedding
 # a grown embedding: missing trailing dimensions take their neutral
 # dataclass defaults, which the fixed-scale similarity kernel prices at
 # zero only where live situations sit at those defaults too.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-# Match boundary (between-match) rates, per rest day. Deliberately much
-# calmer than the in-match fades (learning.DECAY_PER_MINUTE,
-# psychology.CONFIDENCE_DECAY_PER_MINUTE), which run continuously during
-# play and must NOT be re-applied at the boundary.
-MEMORY_DECAY_PER_REST_DAY = 0.99        # learned memories fade slightly
+# Match-boundary rates for transient player state. Memory uses a separate
+# match-count power-law clock; confidence still fades continuously in play and
+# must not be re-applied here as minutes.
 CONFIDENCE_RETENTION_PER_REST_DAY = 0.9  # form fades toward neutral
 FATIGUE_REMAINING_PER_REST_DAY = 0.5     # legs recover quickly
 
@@ -102,19 +100,16 @@ class MindRegistry:
         """One explicit call at match end.
 
         Flushes pending decisions (an outcome that never arrived is
-        never learned from), applies between-match memory decay for the
-        rest days (in-match decay runs continuously per tick and is not
-        re-applied here; role schooling never fades - it is the floor),
-        and mean-reverts psych/physical state on the passed players:
+        never learned from), advances the unified memory clock by one match,
+        and mean-reverts psych/physical state over the passed rest days:
         confidence fades toward neutral, fatigue recovers. Traumas do
         NOT revert - that is what makes them traumas.
 
         `players` should be the full rosters (confidence and fatigue
         live on players who may never have made an on-ball decision)."""
-        memory_factor = MEMORY_DECAY_PER_REST_DAY ** rest_days
         for mind in self._minds.values():
             mind.take_pending()
-            mind.bank.decay(memory_factor)
+            mind.bank.decay(1.0)
 
         confidence_factor = CONFIDENCE_RETENTION_PER_REST_DAY ** rest_days
         fatigue_factor = FATIGUE_REMAINING_PER_REST_DAY ** rest_days
@@ -125,24 +120,27 @@ class MindRegistry:
     # -- serialization (docs/specs/temporal-continuity.md) -------------------
 
     def to_dict(self) -> dict:
-        """Plain-JSON-able snapshot: per identity, the LEARNED instincts
-        and confidence. Role seeds are not serialized - they are derived
-        from the player and re-seeded on load, so schooling tuning
-        applies retroactively."""
+        """Plain-JSON-able snapshot of complete, evolving trace banks."""
         minds: Dict[str, dict] = {}
         for player_id, mind in self._minds.items():
             minds[player_id] = {
                 "confidence": mind.player.confidence,
+                "accumulated_evidence": mind.bank.accumulated_evidence,
                 "instincts": [
                     {
                         "name": instinct.name,
                         "prototype": list(instinct.prototype.as_tuple()),
                         "weights": dict(instinct.action_weights),
-                        "strength": instinct.strength,
+                        "mass": instinct.mass,
                         "source": instinct.source,
+                        "widths": list(instinct.widths),
+                        "repetitions": instinct.repetitions,
+                        "spacing": instinct.spacing,
+                        "age": instinct.age,
+                        "birth_width": instinct.birth_width,
                     }
                     for instinct in mind.bank.instincts
-                    if instinct.source in LEARNED_SOURCES
+                    if isinstance(instinct, Instinct)
                 ],
             }
         for player_id, record in self._dormant.items():
@@ -156,7 +154,12 @@ class MindRegistry:
         given players are revived immediately (role banks re-seeded,
         learned memories re-attached, confidence restored); records for
         identities not in `players` stay dormant until first seen."""
+        schema = data.get("schema")
+        if schema not in (1, SCHEMA_VERSION):
+            raise ValueError(f"unsupported mind schema: {schema!r}")
         registry = cls()
+        if schema == 1:
+            data = cls._migrate_v1(data)
         registry._dormant = {player_id: record for player_id, record
                              in data.get("minds", {}).items()}
         for player in players:
@@ -167,11 +170,49 @@ class MindRegistry:
     @staticmethod
     def _restore_into(mind: PlayerMind, record: dict) -> None:
         mind.player.confidence = record["confidence"]
+        if not record.get("migrated_v1"):
+            mind.bank.instincts = []
         for entry in record["instincts"]:
             mind.bank.instincts.append(Instinct(
                 name=entry["name"],
                 prototype=SituationEmbedding(*entry["prototype"]),
                 action_weights=dict(entry["weights"]),
-                strength=entry["strength"],
+                mass=entry["mass"],
                 source=entry["source"],
+                widths=tuple(entry["widths"]),
+                repetitions=entry["repetitions"],
+                spacing=entry["spacing"],
+                age=entry["age"],
+                birth_width=entry["birth_width"],
             ))
+        mind.bank.accumulated_evidence = record.get(
+            "accumulated_evidence",
+            sum(trace.repetitions for trace in mind.bank.learned_memories()))
+
+    @staticmethod
+    def _migrate_v1(data: dict) -> dict:
+        """Translate scalar learned records; role traces are freshly derived.
+
+        Version 1 never persisted role seeds, so migration materializes current
+        role traces when the player is revived and appends these migrated
+        learned entries in ``_restore_into`` via the marker below.
+        """
+        minds = {}
+        for player_id, record in data.get("minds", {}).items():
+            entries = []
+            for entry in record.get("instincts", []):
+                strength = max(0.0, float(entry.get("strength", 0.0)))
+                entries.append({
+                    "name": entry["name"], "prototype": entry["prototype"],
+                    "weights": entry["weights"], "mass": strength,
+                    "source": entry["source"],
+                    "widths": [LIVED_WIDTH_PLASTIC] * DIMENSIONS,
+                    "repetitions": max(0.0, math.expm1(strength)),
+                    "spacing": max(0.0, math.expm1(strength)),
+                    "age": 0.0, "birth_width": LIVED_WIDTH_PLASTIC,
+                })
+            minds[player_id] = {"confidence": record["confidence"],
+                                "accumulated_evidence": sum(
+                                    entry["repetitions"] for entry in entries),
+                                "instincts": entries, "migrated_v1": True}
+        return {"schema": SCHEMA_VERSION, "minds": minds}
