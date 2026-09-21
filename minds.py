@@ -23,11 +23,10 @@ from instincts import (Instinct, InstinctBank, default_bank_for, DIMENSIONS,
                        LIVED_WIDTH_PLASTIC)
 from situation import SituationEmbedding
 
-# Serialization schema tag. Embedding prototypes are stored as plain
-# value lists, so a mind saved at fewer dimensions restores cleanly into
-# a grown embedding: missing trailing dimensions take their neutral
-# dataclass defaults, which the fixed-scale similarity kernel prices at
-# zero only where live situations sit at those defaults too.
+# Serialization schema tag. Embedding prototypes are stored as plain value
+# lists. The v1 migration still accepts shorter embeddings (the dataclass fills
+# trailing neutral defaults), while v2 stores and validates one receptive-field
+# width per resulting dimension.
 SCHEMA_VERSION = 2
 
 # Match-boundary rates for transient player state. Memory uses a separate
@@ -150,10 +149,13 @@ class MindRegistry:
     @classmethod
     def from_dict(cls, data: dict,
                   players: Iterable[Player] = ()) -> "MindRegistry":
-        """Restore a registry from `to_dict` output. Records for the
-        given players are revived immediately (role banks re-seeded,
-        learned memories re-attached, confidence restored); records for
-        identities not in `players` stay dormant until first seen."""
+        """Restore a registry from ``to_dict`` output.
+
+        Version 2 restores the complete evolving bank. Version 1 re-seeds role
+        traces and appends the learned records that old snapshots contained.
+        Records for identities absent from ``players`` remain dormant until
+        first seen.
+        """
         schema = data.get("schema")
         if schema not in (1, SCHEMA_VERSION):
             raise ValueError(f"unsupported mind schema: {schema!r}")
