@@ -23,7 +23,7 @@ import argparse
 import random
 import sys
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from models import Ball, Environment, MatchState, Position
 from engine import MatchEngine, SimulationConfig
@@ -80,6 +80,8 @@ class MatchSnapshot:
     trauma_strength: float     # total strength of traumas
     pinned_share: float        # players with |confidence| > CONFIDENCE_PINNED
     mean_abs_confidence: float
+    pass_attempts: int = 0     # match quality, for side-effect watching
+    passes_completed: int = 0
 
 
 class SeriesRunner:
@@ -183,6 +185,8 @@ class SeriesRunner:
             pinned_share=pinned / len(everyone),
             mean_abs_confidence=(sum(abs(p.confidence) for p in everyone)
                                  / len(everyone)),
+            pass_attempts=m.home.pass_attempts + m.away.pass_attempts,
+            passes_completed=m.home.passes_completed + m.away.passes_completed,
         )
 
     # -- series-level metrics (Band value functions) -------------------------
@@ -230,6 +234,56 @@ class SeriesRunner:
             trained += bank.familiarity(BIG_NIGHT_PROBE)
             fresh += default_bank_for(player).familiarity(BIG_NIGHT_PROBE)
         return (trained - fresh) / len(everyone)
+
+    # -- composition diagnostics ---------------------------------------------
+    #
+    # The gain above is a difference of two folded numbers, so a zero can
+    # mean "nothing was learned" or "plenty was learned but schooling
+    # still dominates the fold". These split it.
+
+    def _recognition_split(self) -> List[Tuple[float, float]]:
+        """Per player, (role, learned) recognition of the big-night probe."""
+        everyone = self.rosters[0] + self.rosters[1]
+        split = []
+        for player in everyone:
+            mind = self.minds.get(player.player_id)
+            bank = mind.bank if mind is not None else default_bank_for(player)
+            split.append(bank.recognition_split(BIG_NIGHT_PROBE))
+        return split
+
+    def role_recognition(self) -> float:
+        split = self._recognition_split()
+        return sum(role for role, _ in split) / len(split)
+
+    def learned_recognition(self) -> float:
+        split = self._recognition_split()
+        return sum(learned for _, learned in split) / len(split)
+
+    def learned_wins_share(self) -> float:
+        """Share of players whose lived memories out-recognize their
+        schooling at a big-night moment. This is the veteran effect
+        stated as a count: at 0 no player recognizes a big night from
+        having lived one."""
+        split = self._recognition_split()
+        return sum(1 for role, learned in split if learned > role) / len(split)
+
+    # -- match quality (side-effect watching) --------------------------------
+
+    def goals_per_match(self) -> float:
+        return sum(s.goals for s in self.snapshots) / len(self.snapshots)
+
+    def shots_per_match(self) -> float:
+        return sum(s.shots for s in self.snapshots) / len(self.snapshots)
+
+    def pass_completion(self) -> Optional[float]:
+        attempts = sum(s.pass_attempts for s in self.snapshots)
+        if attempts == 0:
+            return None
+        return sum(s.passes_completed for s in self.snapshots) / attempts
+
+    def mean_abs_confidence(self) -> float:
+        return (sum(s.mean_abs_confidence for s in self.snapshots)
+                / len(self.snapshots))
 
 
 # Degenerate-state gates (regression guards) and evolution targets.

@@ -98,14 +98,22 @@ python3 tests/test_discipline.py   # Fouls, cards, free kicks, stable identity
 python3 tests/test_perception.py   # Visual focus, beliefs, and their consequences
 python3 tests/test_cognition.py    # Cognitive load: environment, familiarity, overload
 python3 tests/test_continuity.py   # Match boundary, mind serialization, series runner
+python3 tests/test_sweeps.py       # Sweep harness + knob defaults
 python3 validate.py --matches 20 --seed 42 --gate   # Statistical regression gate
 python3 series.py --matches 10 --seed 42 --gate     # Temporal trajectory gate
+python3 sweeps.py --only approach                   # Compare candidate mechanism changes
 ```
 
 CI (`.github/workflows/ci.yml`) runs all suites plus the validation gate.
 `validate.py` reports each metric against a **gate band** (regression guard,
 fails CI) and a **target band** (real-football realism goal, warns only) -
 tighten gates toward targets as calibration and the ball model improve.
+
+`sweeps.py` is the research counterpart, not a gate: it runs the same seeded
+series under many parameter settings side by side, so a mechanism claim can
+be checked against a control rather than against intuition, with the cost to
+match quality measured in the same run. Every knob it sweeps defaults to
+current behavior, so `baseline` in its report is the shipped engine.
 
 See `docs/reviews/` for engine reviews and the current roadmap, and
 `docs/specs/` for design specs (temporal continuity).
@@ -138,6 +146,8 @@ anstoss-engine/
 ├── engine.py       # MatchEngine: thin orchestrator + tick/minute/match loops
 ├── metrics.py      # MatchMetrics: passive per-match statistics collector
 ├── validate.py     # Statistical validation harness (CI gate + realism targets)
+├── series.py       # Series runner: persistent squads, trajectory gates
+├── sweeps.py       # Parameter sweep harness: mechanism comparison + side effects
 ├── teams.py        # Team/player creation utilities
 ├── visualizer.py   # ASCII rendering
 ├── debug_view.py   # Step-by-step colored debug visualizer
