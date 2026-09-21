@@ -30,6 +30,7 @@ jobs:
           python tests/test_perception.py
           python tests/test_cognition.py
           python tests/test_continuity.py
+          python tests/test_sweeps.py
 
       - name: Statistical validation gate
         run: python validate.py --matches 20 --seed 42 --gate

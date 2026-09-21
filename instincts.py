@@ -12,8 +12,8 @@ confident players sample their success anchors, rattled players feel
 their traumas and retreat to the safe ball. The action vocabulary matches
 the decision layer: shoot, dribble, pass_forward, pass_safe.
 """
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, replace
+from typing import Dict, List, Tuple
 
 from models import Player
 from situation import SituationEmbedding, similarity
@@ -56,6 +56,32 @@ PROTOTYPE_BLEND = 0.2          # how far a merge moves the prototype
 MAX_LEARNED_MEMORIES = 12      # per bank; weakest dropped beyond this
 MIN_MEMORY_STRENGTH = 0.05     # decayed below this = forgotten
 
+# How recognition aggregates over the bank. K=1 is a bare max: the single
+# best-matching memory IS the recognition, and a career of near-misses
+# adds nothing to it. Raising K lets accumulated lived experience sum
+# toward recognition - the difference between "I have been in this exact
+# moment" and "I have spent a career in moments like this" - with each
+# next-best memory carrying a geometric BLEND_DECAY weight. K=1 keeps the
+# original single-pass max at unchanged cost (this runs on every on-ball
+# decision).
+FAMILIARITY_TOP_K = 1
+FAMILIARITY_BLEND_DECAY = 0.0
+
+# Shelter from decay in proportion to the load a memory was formed under:
+# effective factor = factor ** (1 - shelter * load). At 0 every memory
+# fades alike (original behavior); at 1 a full-load memory never fades.
+# The claim under test: big nights should imprint durably, so a veteran's
+# high-load memories outlive the quiet-Tuesday ones that outnumber them.
+HIGH_LOAD_DECAY_SHELTER = 0.0
+
+# Strength ceilings in learn(): how much one outcome can imprint, and how
+# strong a brand-new memory may start. Role seeds sit at strength 1.0 and
+# are discounted to ROLE_SCHOOLING_FAMILIARITY for recognition, so a
+# learned memory that cannot exceed that discount can never become the
+# thing a player recognizes a situation BY, however exactly it matches.
+MAX_GAIN_PER_OUTCOME = 0.6
+MAX_NEW_MEMORY_STRENGTH = 0.6
+
 LEARNED_SOURCES = ("experience", "trauma")
 
 
@@ -90,6 +116,28 @@ def aggression_tilted(weights: Dict[str, float],
     }
 
 
+def _aggregate_recognition(recognitions: List[float]) -> float:
+    """Fold per-memory recognitions into one number (see FAMILIARITY_TOP_K).
+
+    Uncapped: callers that feed it into a 0-1 familiarity cap it, while
+    diagnostics want to see how far past the ceiling a bank actually is."""
+    if not recognitions:
+        return 0.0
+    if FAMILIARITY_TOP_K <= 1:
+        return max(recognitions)
+    best = sorted(recognitions, reverse=True)[:FAMILIARITY_TOP_K]
+    return sum(recognition * (FAMILIARITY_BLEND_DECAY ** rank)
+               for rank, recognition in enumerate(best))
+
+
+def _sheltered(factor: float, load: float) -> float:
+    """A decay factor softened by the load its memory was formed under."""
+    if HIGH_LOAD_DECAY_SHELTER <= 0.0 or factor <= 0.0:
+        return factor
+    exponent = 1.0 - HIGH_LOAD_DECAY_SHELTER * max(0.0, min(1.0, load))
+    return factor ** exponent
+
+
 def _blend_prototypes(old: SituationEmbedding,
                       new: SituationEmbedding) -> SituationEmbedding:
     keep = 1.0 - PROTOTYPE_BLEND
@@ -122,6 +170,7 @@ class InstinctBank:
         """
         weights = {action: 0.0 for action in ALL_ACTIONS}
         familiarity = 0.0
+        recognitions: List[float] = []
 
         for instinct in self.instincts:
             sim = similarity(situation, instinct.prototype)
@@ -134,7 +183,13 @@ class InstinctBank:
             recognition = sim * sim * instinct.strength
             if instinct.source == "role":
                 recognition *= ROLE_SCHOOLING_FAMILIARITY
-            familiarity = max(familiarity, recognition)
+            if FAMILIARITY_TOP_K <= 1:
+                familiarity = max(familiarity, recognition)
+            else:
+                recognitions.append(recognition)
+
+        if recognitions:
+            familiarity = _aggregate_recognition(recognitions)
 
         # Confidence tilt
         for action in list(weights):
@@ -163,6 +218,27 @@ class InstinctBank:
         _, familiarity = self.recall(situation)
         return familiarity
 
+    def recognition_split(self,
+                          situation: SituationEmbedding) -> Tuple[float, float]:
+        """(role, learned) recognition, each folded the way familiarity
+        is, and uncapped.
+
+        Familiarity is one number, but WHICH memory class a player
+        recognizes a moment by is the whole veteran question: schooling
+        recognition is a flat floor every player is born with, so only
+        the learned side can make a trained squad differ from a fresh
+        one."""
+        role: List[float] = []
+        learned: List[float] = []
+        for instinct in self.instincts:
+            sim = similarity(situation, instinct.prototype)
+            recognition = sim * sim * instinct.strength
+            if instinct.source == "role":
+                role.append(recognition * ROLE_SCHOOLING_FAMILIARITY)
+            else:
+                learned.append(recognition)
+        return _aggregate_recognition(role), _aggregate_recognition(learned)
+
     # -- learning (written by outcomes) ---------------------------------------
 
     def learn(self, situation: SituationEmbedding, action: str,
@@ -174,7 +250,7 @@ class InstinctBank:
             return
 
         source = "experience" if valence > 0 else "trauma"
-        gained = min(0.6, abs(valence) * significance)
+        gained = min(MAX_GAIN_PER_OUTCOME, abs(valence) * significance)
 
         merged = self._merge_into_existing(situation, action, source, gained)
         if not merged:
@@ -183,7 +259,7 @@ class InstinctBank:
                 name=f"{source}_{action}",
                 prototype=situation,
                 action_weights={action: weight},
-                strength=min(0.6, 0.15 + gained),
+                strength=min(MAX_NEW_MEMORY_STRENGTH, 0.15 + gained),
                 source=source,
             ))
         self._prune()
@@ -210,7 +286,8 @@ class InstinctBank:
         """Fade learned memories (seeds don't fade); forget the negligible."""
         for instinct in self.instincts:
             if instinct.source in LEARNED_SOURCES:
-                instinct.strength *= factor
+                instinct.strength *= _sheltered(factor,
+                                                instinct.prototype.load)
         self.instincts = [i for i in self.instincts
                           if i.source not in LEARNED_SOURCES
                           or i.strength >= MIN_MEMORY_STRENGTH]
@@ -225,9 +302,25 @@ class InstinctBank:
 
 def _proto(pressure=0.5, progression=0.5, time_criticality=0.5,
            spatial_density=0.5, support=0.5, width=0.5,
-           load=SCHOOLING_LOAD) -> SituationEmbedding:
+           load=None) -> SituationEmbedding:
+    load = SCHOOLING_LOAD if load is None else load
     return SituationEmbedding(pressure, progression, time_criticality,
                               spatial_density, support, width, load)
+
+
+def _at_schooling_load(prototype: SituationEmbedding) -> SituationEmbedding:
+    """Stamp a role seed with the CURRENT schooling load.
+
+    ROLE_SEEDS is built once at import, so the load its prototypes were
+    written with freezes there. Stamping at bank construction instead
+    keeps SCHOOLING_LOAD a live dial - it is documented as a tuning
+    knob ('a flat familiarity tax on every ordinary-environment
+    situation'), and an import-time constant that silently ignores every
+    later change is not one. Returns the prototype unchanged when it
+    already carries the current load, so this is free at the default."""
+    if prototype.load == SCHOOLING_LOAD:
+        return prototype
+    return replace(prototype, load=SCHOOLING_LOAD)
 
 
 # Per role-group: (situation prototype, action weights) comfort patterns.
@@ -278,7 +371,7 @@ def default_bank_for(player: Player) -> InstinctBank:
     aggressive players' comfort actions skew bold, timid ones' skew safe."""
     group = _ROLE_GROUP.get(player.role.lower(), "defender")
     return InstinctBank([
-        Instinct(seed.name, seed.prototype,
+        Instinct(seed.name, _at_schooling_load(seed.prototype),
                  aggression_tilted(seed.action_weights, player.aggression),
                  strength=seed.strength, source="role")
         for seed in ROLE_SEEDS[group]
