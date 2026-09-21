@@ -158,12 +158,18 @@ def test_pass_is_aimed_at_the_believed_position():
 
 def test_perception_errors_cost_completion():
     """Focal perception must not outperform omniscience (determinism-
-    checked over a seeded sample)."""
-    def completion(perception_model, seed):
-        engine = MatchEngine(SimulationConfig(ticks_per_minute=6, seed=seed))
-        engine.actions.perception = perception_model
+    checked over a seeded sample of independent matches).
+
+    Keep each match independent: reusing one engine also reuses its mind
+    registry, so later matches measure perception-dependent career learning
+    as well as the immediate cost of a mistaken belief.
+    """
+    def completion(perception_model, seeds):
         completed = attempts = 0
-        for _ in range(4):
+        for seed in seeds:
+            engine = MatchEngine(SimulationConfig(ticks_per_minute=6,
+                                                   seed=seed))
+            engine.actions.perception = perception_model
             home, away = create_tactical_matchup("balanced", "balanced")
             state = MatchState(home_team=home, away_team=away, ball=Ball())
             m = MatchMetrics(home, away)
@@ -173,8 +179,9 @@ def test_perception_errors_cost_completion():
             attempts += m.home.pass_attempts + m.away.pass_attempts
         return completed / attempts
 
-    focal = completion(FocalPerception(), seed=31)
-    omniscient = completion(OmniscientPerception(), seed=31)
+    seeds = range(31, 35)
+    focal = completion(FocalPerception(), seeds)
+    omniscient = completion(OmniscientPerception(), seeds)
     assert focal <= omniscient + 0.02, (focal, omniscient)
 
 
